@@ -3,7 +3,7 @@
   "description": "Segue e curte automaticamente (via APIs do IG, sem abrir abas).",
   "version": "0.2.0",
   "manifest_version": 3,
-  "permissions": ["storage", "scripting", "alarms"],
+  "permissions": ["storage", "scripting", "alarms", "tabs"],
   "host_permissions": ["https://www.instagram.com/*"],
   "background": {
     "service_worker": "background.js"
