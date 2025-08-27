@@ -157,12 +157,25 @@ input[type="range"] {
   width: 40px;
 }
 
-.badge--seguido {
-  background: #2ecc71;
-  color: #fff;
+.badge {
   padding: 2px 4px;
   border-radius: 4px;
   font-size: 12px;
+}
+
+.badge--seguido {
+  background: #2ecc71;
+  color: #fff;
+}
+
+.badge--like {
+  background: #e57373;
+  color: #fff;
+}
+
+.badge--unfollow {
+  background: #777;
+  color: #fff;
 }
 
 .dialog {
