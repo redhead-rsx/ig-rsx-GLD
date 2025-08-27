@@ -53,6 +53,21 @@ async function runOne() {
   if (!tab) { scheduleNext(5000); return; }
 
   chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (res) => {
+    if (chrome.runtime.lastError) {
+      chrome.runtime.sendMessage({
+        type: "TASK_DONE",
+        ok: false,
+        task,
+        error: String(chrome.runtime.lastError.message || chrome.runtime.lastError),
+      });
+    } else {
+      chrome.runtime.sendMessage({
+        type: "TASK_DONE",
+        ok: res?.ok,
+        task,
+        error: res?.error,
+      });
+    }
     console.log("Exec result", res);
     scheduleNext(4000 + Math.random() * 2000);
   });

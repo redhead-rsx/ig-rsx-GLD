@@ -2,6 +2,7 @@ const followersPerPage = 10;
 let followers = [];
 let currentPage = 1;
 let currentUsername = null;
+let followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
 
 document.addEventListener("DOMContentLoaded", () => {
   bindTabs();
@@ -9,23 +10,21 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("loadFollowers")
     .addEventListener("click", loadFollowersHandler);
-  document.getElementById("process").addEventListener("click", processQueue);
+  document.getElementById("process").addEventListener("click", openActionDialog);
+  document.getElementById("dlgCancel").addEventListener("click", closeActionDialog);
+  document.getElementById("dlgAdd").addEventListener("click", confirmActionDialog);
   document
     .getElementById("start")
-    .addEventListener("click", () =>
-      chrome.runtime.sendMessage({ type: "RUN_START" }),
-    );
+    .addEventListener("click", () => chrome.runtime.sendMessage({ type: "RUN_START" }));
   document
     .getElementById("stop")
-    .addEventListener("click", () =>
-      chrome.runtime.sendMessage({ type: "RUN_STOP" }),
-    );
+    .addEventListener("click", () => chrome.runtime.sendMessage({ type: "RUN_STOP" }));
   document
-    .querySelectorAll('input[name="mode"]')
-    .forEach((r) => r.addEventListener("change", onModeChange));
-  document.getElementById("likeCount").addEventListener("change", saveMode);
-  restoreMode();
+    .querySelectorAll('input[name="actionMode"]')
+    .forEach((r) => r.addEventListener("change", onDialogModeChange));
+  onDialogModeChange();
   loadConfig();
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 });
 
 function bindTabs() {
@@ -38,7 +37,7 @@ function bindTabs() {
         .querySelectorAll(".tab-content")
         .forEach((c) => c.classList.remove("active"));
       btn.classList.add("active");
-      document.getElementById(btn.dataset.tab).classList.add("active");
+      document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
     });
   });
 }
@@ -64,11 +63,11 @@ async function getActiveTab() {
 }
 
 function extractUsernameFromUrl(url) {
-  const m = url && url.match(/^https?:\/\/www\.instagram\.com\/([^\/]+)\/?/);
-  return m ? m[1] : null;
+  const m = url && url.match(/^https?:\/\/(www\.)?instagram\.com\/([^\/?#]+)\/?.*/);
+  return m ? m[2] : null;
 }
 
-async function execTaskInActiveTab(task) {
+async function execTask(task) {
   const tab = await getActiveTab();
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (resp) => {
@@ -103,24 +102,24 @@ async function loadFollowersHandler() {
   currentUsername = username;
   const key = `silent.followers.${username}`;
   const saved = await getLocal(key);
+  followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
   let startIndex = 0;
-  let cursor = null;
   followers = [];
-  let totalLoaded = 0;
   if (saved && saved.users && saved.users.length) {
     const resume = confirm("Você gostaria de tentar continuar de onde parou?");
     if (resume) {
       followers = saved.users;
-      cursor = saved.cursor;
-      startIndex = saved.lastIndex || saved.users.length;
-      totalLoaded = startIndex;
+      followersState.cursor = saved.cursor;
+      followersState.totalLoaded = saved.totalLoaded || saved.users.length;
+      followersState.lastIndex = saved.lastIndex || followersState.totalLoaded;
+      startIndex = followersState.lastIndex;
     } else {
       startIndex =
         parseInt(
           prompt(
-            "Limite da fila: 200. Digite o número do seguidor para começar (0 = mais recente).",
+            "Digite o número do seguidor para começar (0 = mais recente).",
             "0",
-          ),
+          ) || "0",
           10,
         ) || 0;
     }
@@ -128,35 +127,37 @@ async function loadFollowersHandler() {
     startIndex =
       parseInt(
         prompt(
-          "Limite da fila: 200. Digite o número do seguidor para começar (0 = mais recente).",
+          "Digite o número do seguidor para começar (0 = mais recente).",
           "0",
-        ),
+        ) || "0",
         10,
       ) || 0;
   }
   let lookup;
-  try {
-    lookup = await execTaskInActiveTab({ kind: "LOOKUP", username });
-  } catch (e) {
-    console.error(e);
+  for (let i = 0; i < 2; i++) {
+    try {
+      lookup = await execTask({ kind: "LOOKUP", username });
+      if (lookup && lookup.userId) break;
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 300));
   }
   if (!lookup || !lookup.userId) {
     alert("Não foi possível resolver o usuário.");
     return;
   }
   const userId = lookup.userId;
+  let cursor = followersState.cursor;
+  let totalLoaded = followersState.totalLoaded;
   while (followers.length < 200) {
     let res;
     try {
-      res = await execTaskInActiveTab({
+      res = await execTask({
         kind: "LIST_FOLLOWERS",
         userId,
         limit: 24,
         cursor,
       });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
     if (!res || !res.users) break;
     for (const u of res.users) {
       if (totalLoaded < startIndex) {
@@ -164,18 +165,16 @@ async function loadFollowersHandler() {
         continue;
       }
       if (followers.length >= 200) break;
-      followers.push({ id: u.id, username: u.username });
+      followers.push({ id: u.id, username: u.username, status: u.status });
       totalLoaded++;
     }
     cursor = res.nextCursor;
     if (!cursor) break;
   }
-  await setLocal(key, {
-    users: followers,
-    cursor,
-    totalLoaded,
-    lastIndex: totalLoaded,
-  });
+  followersState.cursor = cursor;
+  followersState.totalLoaded = totalLoaded;
+  followersState.lastIndex = totalLoaded;
+  await saveFollowersState();
   currentPage = 1;
   renderFollowers();
 }
@@ -185,18 +184,33 @@ function renderFollowers() {
   tbody.innerHTML = "";
   const start = (currentPage - 1) * followersPerPage;
   const pageUsers = followers.slice(start, start + followersPerPage);
-  pageUsers.forEach((u, idx) => {
+  pageUsers.forEach((u) => {
     const tr = document.createElement("tr");
     const tdCheck = document.createElement("td");
     const chk = document.createElement("input");
     chk.type = "checkbox";
     chk.className = "user-check";
-    chk.dataset.index = start + idx;
+    chk.checked = !!u.checked;
+    chk.addEventListener("change", () => {
+      u.checked = chk.checked;
+    });
     tdCheck.appendChild(chk);
+    const tdAvatar = document.createElement("td");
+    const av = document.createElement("div");
+    av.className = "avatar";
+    tdAvatar.appendChild(av);
     const tdUser = document.createElement("td");
     tdUser.textContent = "@" + u.username;
-    tr.appendChild(tdCheck);
-    tr.appendChild(tdUser);
+    const tdStatus = document.createElement("td");
+    if (u.status === "queued") {
+      tdStatus.textContent = "Na fila";
+    } else if (u.status === "seguido") {
+      const b = document.createElement("span");
+      b.className = "badge--seguido";
+      b.textContent = "Seguido";
+      tdStatus.appendChild(b);
+    }
+    tr.append(tdCheck, tdAvatar, tdUser, tdStatus);
     tbody.appendChild(tr);
   });
   renderPagination();
@@ -207,81 +221,78 @@ function renderPagination() {
   const container = document.getElementById("pagination");
   container.innerHTML = "";
   if (totalPages <= 1) return;
-  const prev = document.createElement("button");
-  prev.textContent = "<";
-  prev.disabled = currentPage === 1;
-  prev.addEventListener("click", () => {
+  const addBtn = (label, handler, disabled = false, active = false) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (disabled) b.disabled = true;
+    if (active) b.classList.add("active");
+    b.addEventListener("click", handler);
+    container.appendChild(b);
+  };
+  addBtn("<<", () => {
+    currentPage = 1;
+    renderFollowers();
+  }, currentPage === 1);
+  addBtn("<", () => {
     if (currentPage > 1) {
       currentPage--;
       renderFollowers();
     }
-  });
-  container.appendChild(prev);
+  }, currentPage === 1);
   for (let p = 1; p <= totalPages; p++) {
-    const btn = document.createElement("button");
-    btn.textContent = p;
-    if (p === currentPage) btn.classList.add("active");
-    btn.addEventListener("click", () => {
-      currentPage = p;
-      renderFollowers();
-    });
-    container.appendChild(btn);
-  }
-  const next = document.createElement("button");
-  next.textContent = ">";
-  next.disabled = currentPage === totalPages;
-  next.addEventListener("click", () => {
-    if (currentPage < totalPages) {
-      currentPage++;
-      renderFollowers();
-    }
-  });
-  container.appendChild(next);
-}
-
-function onModeChange() {
-  const mode = document.querySelector('input[name="mode"]:checked');
-  document.getElementById("likeCount").disabled =
-    mode && mode.value !== "follow-like";
-  saveMode();
-}
-
-async function restoreMode() {
-  const data = await getLocal("silent.mode");
-  if (data) {
-    const modeEl = document.querySelector(
-      `input[name="mode"][value="${data.mode}"]`,
+    addBtn(
+      String(p),
+      () => {
+        currentPage = p;
+        renderFollowers();
+      },
+      false,
+      p === currentPage,
     );
-    if (modeEl) modeEl.checked = true;
-    if (typeof data.likeCount === "number") {
-      document.getElementById("likeCount").value = data.likeCount;
-    }
-  } else {
-    document.querySelector('input[name="mode"][value="follow"]').checked = true;
   }
-  onModeChange();
+  addBtn(
+    ">",
+    () => {
+      if (currentPage < totalPages) {
+        currentPage++;
+        renderFollowers();
+      }
+    },
+    currentPage === totalPages,
+  );
+  addBtn(
+    ">>",
+    () => {
+      currentPage = totalPages;
+      renderFollowers();
+    },
+    currentPage === totalPages,
+  );
 }
 
-function saveMode() {
-  const modeEl = document.querySelector('input[name="mode"]:checked');
-  const likeCount =
-    parseInt(document.getElementById("likeCount").value, 10) || 1;
-  setLocal("silent.mode", {
-    mode: modeEl ? modeEl.value : "follow",
-    likeCount,
-  });
+function openActionDialog() {
+  document.getElementById("actionDialog").classList.add("show");
 }
 
-async function processQueue() {
-  if (!followers.length) return;
-  const checked = Array.from(
-    document.querySelectorAll(".user-check:checked"),
-  ).map((c) => followers[parseInt(c.dataset.index, 10)]);
-  const list = checked.length ? checked : followers;
-  const modeEl = document.querySelector('input[name="mode"]:checked');
-  const mode = modeEl ? modeEl.value : "follow";
-  const likeCount =
-    parseInt(document.getElementById("likeCount").value, 10) || 1;
+function closeActionDialog() {
+  document.getElementById("actionDialog").classList.remove("show");
+}
+
+function onDialogModeChange() {
+  const mode = document.querySelector('input[name="actionMode"]:checked').value;
+  document.getElementById("dlgLikeCount").style.display =
+    mode === "follow-like" ? "inline-block" : "none";
+}
+
+async function confirmActionDialog() {
+  if (!followers.length) {
+    closeActionDialog();
+    return;
+  }
+  let list = followers.filter((u) => u.checked);
+  if (!list.length) list = followers;
+  const mode = document.querySelector('input[name="actionMode"]:checked').value;
+  const likeCount = parseInt(document.getElementById("dlgLikeCount").value, 10) || 1;
   const items = [];
   for (const u of list) {
     if (mode === "follow") {
@@ -295,9 +306,14 @@ async function processQueue() {
     } else if (mode === "unfollow") {
       items.push({ kind: "UNFOLLOW", userId: u.id });
     }
+    u.status = "queued";
   }
   chrome.runtime.sendMessage({ type: "QUEUE_ADD", items });
-  showToast(`${items.length} tarefas adicionadas à fila.`);
+  await saveFollowersState();
+  renderFollowers();
+  showToast(`${items.length} tarefas adicionadas`);
+  closeActionDialog();
+  // chrome.runtime.sendMessage({ type: "RUN_START" }); // opcional
 }
 
 function showToast(msg) {
@@ -307,6 +323,17 @@ function showToast(msg) {
   setTimeout(() => {
     t.style.display = "none";
   }, 3000);
+}
+
+async function saveFollowersState() {
+  if (!currentUsername) return;
+  const key = `silent.followers.${currentUsername}`;
+  await setLocal(key, {
+    users: followers,
+    cursor: followersState.cursor,
+    totalLoaded: followersState.totalLoaded,
+    lastIndex: followersState.lastIndex,
+  });
 }
 
 async function loadConfig() {
@@ -330,7 +357,7 @@ async function loadConfig() {
     if (cfg[id] !== undefined) document.getElementById(id).value = cfg[id];
   });
   document
-    .querySelectorAll("#config input")
+    .querySelectorAll("#tab-settings input")
     .forEach((el) => el.addEventListener("change", saveConfig));
 }
 
@@ -364,3 +391,15 @@ function saveConfig() {
   };
   setLocal("silent.cfg.v1", cfg);
 }
+
+function handleRuntimeMessage(msg) {
+  if (msg?.type === "TASK_DONE" && msg.ok && msg.task?.kind === "FOLLOW") {
+    const idx = followers.findIndex((u) => u.id === msg.task.userId);
+    if (idx !== -1) {
+      followers[idx].status = "seguido";
+      saveFollowersState();
+      renderFollowers();
+    }
+  }
+}
+
