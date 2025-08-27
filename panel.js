@@ -3,62 +3,56 @@ let followers = [];
 let currentPage = 1;
 let currentUsername = null;
 let followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
+let panelDoc;
 
-document.addEventListener("DOMContentLoaded", () => {
+export function init(root) {
+  panelDoc = root;
   bindTabs();
   bindDropdown();
-  document
+  panelDoc
     .getElementById("loadFollowers")
     .addEventListener("click", loadFollowersHandler);
-  document.getElementById("process").addEventListener("click", openActionDialog);
-  document.getElementById("dlgCancel").addEventListener("click", closeActionDialog);
-  document.getElementById("dlgAdd").addEventListener("click", confirmActionDialog);
-  document
+  panelDoc.getElementById("process").addEventListener("click", openActionDialog);
+  panelDoc.getElementById("dlgCancel").addEventListener("click", closeActionDialog);
+  panelDoc.getElementById("dlgAdd").addEventListener("click", confirmActionDialog);
+  panelDoc
     .getElementById("start")
     .addEventListener("click", () => chrome.runtime.sendMessage({ type: "RUN_START" }));
-  document
+  panelDoc
     .getElementById("stop")
     .addEventListener("click", () => chrome.runtime.sendMessage({ type: "RUN_STOP" }));
-  document
+  panelDoc
     .querySelectorAll('input[name="actionMode"]')
     .forEach((r) => r.addEventListener("change", onDialogModeChange));
   onDialogModeChange();
   loadConfig();
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
-});
+}
 
 function bindTabs() {
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
+  panelDoc.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document
+      panelDoc
         .querySelectorAll(".tab-btn")
         .forEach((b) => b.classList.remove("active"));
-      document
+      panelDoc
         .querySelectorAll(".tab-content")
         .forEach((c) => c.classList.remove("active"));
       btn.classList.add("active");
-      document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+      panelDoc.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
     });
   });
 }
 
 function bindDropdown() {
-  const btn = document.getElementById("loadBtn");
-  const menu = document.getElementById("loadMenu");
+  const btn = panelDoc.getElementById("loadBtn");
+  const menu = panelDoc.getElementById("loadMenu");
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     menu.style.display = menu.style.display === "block" ? "none" : "block";
   });
-  document.addEventListener("click", () => {
+  panelDoc.addEventListener("click", () => {
     menu.style.display = "none";
-  });
-}
-
-async function getActiveTab() {
-  return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) =>
-      resolve(tabs[0]),
-    );
   });
 }
 
@@ -67,16 +61,16 @@ function extractUsernameFromUrl(url) {
   return m ? m[2] : null;
 }
 
-async function execTask(task) {
-  const tab = await getActiveTab();
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (resp) => {
-      if (chrome.runtime.lastError) {
-        reject(chrome.runtime.lastError);
-      } else {
-        resolve(resp);
+function execTask(task) {
+  return new Promise((resolve) => {
+    window.postMessage({ __BOT__: true, type: "TASK", task }, "*");
+    const onMsg = (ev) => {
+      if (ev.data?.__BOT__ && ev.data.type === "TASK_RESULT") {
+        window.removeEventListener("message", onMsg);
+        resolve(ev.data.payload);
       }
-    });
+    };
+    window.addEventListener("message", onMsg);
   });
 }
 
@@ -93,8 +87,7 @@ function setLocal(key, value) {
 }
 
 async function loadFollowersHandler() {
-  const tab = await getActiveTab();
-  const username = extractUsernameFromUrl(tab.url);
+  const username = extractUsernameFromUrl(location.href);
   if (!username) {
     alert("Abra um perfil do Instagram para carregar seguidores.");
     return;
@@ -180,7 +173,7 @@ async function loadFollowersHandler() {
 }
 
 function renderFollowers() {
-  const tbody = document.querySelector("#followersTable tbody");
+  const tbody = panelDoc.querySelector("#followersTable tbody");
   tbody.innerHTML = "";
   const start = (currentPage - 1) * followersPerPage;
   const pageUsers = followers.slice(start, start + followersPerPage);
@@ -218,7 +211,7 @@ function renderFollowers() {
 
 function renderPagination() {
   const totalPages = Math.ceil(followers.length / followersPerPage);
-  const container = document.getElementById("pagination");
+  const container = panelDoc.getElementById("pagination");
   container.innerHTML = "";
   if (totalPages <= 1) return;
   const addBtn = (label, handler, disabled = false, active = false) => {
@@ -271,16 +264,16 @@ function renderPagination() {
 }
 
 function openActionDialog() {
-  document.getElementById("actionDialog").classList.add("show");
+  panelDoc.getElementById("actionDialog").classList.add("show");
 }
 
 function closeActionDialog() {
-  document.getElementById("actionDialog").classList.remove("show");
+  panelDoc.getElementById("actionDialog").classList.remove("show");
 }
 
 function onDialogModeChange() {
-  const mode = document.querySelector('input[name="actionMode"]:checked').value;
-  document.getElementById("dlgLikeCount").style.display =
+  const mode = panelDoc.querySelector('input[name="actionMode"]:checked').value;
+  panelDoc.getElementById("dlgLikeCount").style.display =
     mode === "follow-like" ? "inline-block" : "none";
 }
 
@@ -291,8 +284,8 @@ async function confirmActionDialog() {
   }
   let list = followers.filter((u) => u.checked);
   if (!list.length) list = followers;
-  const mode = document.querySelector('input[name="actionMode"]:checked').value;
-  const likeCount = parseInt(document.getElementById("dlgLikeCount").value, 10) || 1;
+  const mode = panelDoc.querySelector('input[name="actionMode"]:checked').value;
+  const likeCount = parseInt(panelDoc.getElementById("dlgLikeCount").value, 10) || 1;
   const items = [];
   for (const u of list) {
     if (mode === "follow") {
@@ -317,7 +310,7 @@ async function confirmActionDialog() {
 }
 
 function showToast(msg) {
-  const t = document.getElementById("toast");
+  const t = panelDoc.getElementById("toast");
   t.textContent = msg;
   t.style.display = "block";
   setTimeout(() => {
@@ -348,15 +341,15 @@ async function loadConfig() {
     "cfgUnfollowOlderThan",
     "cfgNotUnfollowYoungerThan",
   ];
-  document.getElementById("cfgKeepFollowers").checked = !!cfg.keepFollowers;
-  document.getElementById("cfgUnfollowOlderThanChk").checked =
+  panelDoc.getElementById("cfgKeepFollowers").checked = !!cfg.keepFollowers;
+  panelDoc.getElementById("cfgUnfollowOlderThanChk").checked =
     !!cfg.unfollowOlderThanChk;
-  document.getElementById("cfgNotUnfollowYoungerThanChk").checked =
+  panelDoc.getElementById("cfgNotUnfollowYoungerThanChk").checked =
     !!cfg.notUnfollowYoungerThanChk;
   ids.forEach((id) => {
-    if (cfg[id] !== undefined) document.getElementById(id).value = cfg[id];
+    if (cfg[id] !== undefined) panelDoc.getElementById(id).value = cfg[id];
   });
-  document
+  panelDoc
     .querySelectorAll("#tab-settings input")
     .forEach((el) => el.addEventListener("change", saveConfig));
 }
@@ -364,28 +357,28 @@ async function loadConfig() {
 function saveConfig() {
   const cfg = {
     cfgActionDelay:
-      parseInt(document.getElementById("cfgActionDelay").value, 10) || 0,
+      parseInt(panelDoc.getElementById("cfgActionDelay").value, 10) || 0,
     cfgSkipDelay:
-      parseInt(document.getElementById("cfgSkipDelay").value, 10) || 0,
+      parseInt(panelDoc.getElementById("cfgSkipDelay").value, 10) || 0,
     cfgRandomPercent:
-      parseInt(document.getElementById("cfgRandomPercent").value, 10) || 0,
+      parseInt(panelDoc.getElementById("cfgRandomPercent").value, 10) || 0,
     cfgRetrySoft:
-      parseInt(document.getElementById("cfgRetrySoft").value, 10) || 0,
+      parseInt(panelDoc.getElementById("cfgRetrySoft").value, 10) || 0,
     cfgRetryHard:
-      parseInt(document.getElementById("cfgRetryHard").value, 10) || 0,
+      parseInt(panelDoc.getElementById("cfgRetryHard").value, 10) || 0,
     cfgRetry429:
-      parseInt(document.getElementById("cfgRetry429").value, 10) || 0,
-    keepFollowers: document.getElementById("cfgKeepFollowers").checked,
-    unfollowOlderThanChk: document.getElementById("cfgUnfollowOlderThanChk")
+      parseInt(panelDoc.getElementById("cfgRetry429").value, 10) || 0,
+    keepFollowers: panelDoc.getElementById("cfgKeepFollowers").checked,
+    unfollowOlderThanChk: panelDoc.getElementById("cfgUnfollowOlderThanChk")
       .checked,
     unfollowOlderThan:
-      parseInt(document.getElementById("cfgUnfollowOlderThan").value, 10) || 0,
-    notUnfollowYoungerThanChk: document.getElementById(
+      parseInt(panelDoc.getElementById("cfgUnfollowOlderThan").value, 10) || 0,
+    notUnfollowYoungerThanChk: panelDoc.getElementById(
       "cfgNotUnfollowYoungerThanChk",
     ).checked,
     notUnfollowYoungerThan:
       parseInt(
-        document.getElementById("cfgNotUnfollowYoungerThan").value,
+        panelDoc.getElementById("cfgNotUnfollowYoungerThan").value,
         10,
       ) || 0,
   };
