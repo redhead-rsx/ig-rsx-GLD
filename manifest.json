@@ -1,0 +1,27 @@
+{
+  "name": "Ig-rsx GOLD",
+  "description": "Segue e curte automaticamente (clique na UI)",
+  "version": "0.1.0",
+  "manifest_version": 3,
+  "permissions": ["storage", "tabs", "scripting", "alarms"],
+  "host_permissions": ["https://www.instagram.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["contentscript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["liker.js"],
+      "matches": ["https://www.instagram.com/*"]
+    }
+  ]
+}

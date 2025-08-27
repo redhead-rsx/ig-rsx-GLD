@@ -1,0 +1,17 @@
+{
+  "name": "ig-rsx-gold",
+  "version": "0.1.0",
+  "description": "Extensão Chrome que segue perfis e curte a primeira mídia (clique na UI).",
+  "author": "Dias",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "lint": "eslint . --ext .js",
+    "format": "prettier --write .",
+    "zip": "zip -r dist/instagram-bot-ui.zip . -x \"node_modules/*\" \"dist/*\""
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3"
+  }
+}
