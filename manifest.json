@@ -8,9 +8,7 @@
   "background": {
     "service_worker": "background.js"
   },
-  "action": {
-    "default_popup": "popup.html"
-  },
+  "action": {},
   "content_scripts": [
     {
       "matches": ["https://www.instagram.com/*"],
@@ -20,7 +18,14 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected.js", "igClient.js", "runner.js"],
+      "resources": [
+        "injected.js",
+        "igClient.js",
+        "runner.js",
+        "panel.html",
+        "panel.js",
+        "panel.css"
+      ],
       "matches": ["https://www.instagram.com/*"]
     }
   ]

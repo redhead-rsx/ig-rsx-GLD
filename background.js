@@ -20,6 +20,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab.id) return;
+  chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_PANEL" });
+});
+
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === "tick") runOne();
 });
@@ -52,23 +57,35 @@ async function runOne() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) { scheduleNext(5000); return; }
 
-  chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (res) => {
-    if (chrome.runtime.lastError) {
-      chrome.runtime.sendMessage({
-        type: "TASK_DONE",
-        ok: false,
-        task,
-        error: String(chrome.runtime.lastError.message || chrome.runtime.lastError),
-      });
-    } else {
-      chrome.runtime.sendMessage({
-        type: "TASK_DONE",
-        ok: res?.ok,
-        task,
-        error: res?.error,
-      });
-    }
-    console.log("Exec result", res);
-    scheduleNext(4000 + Math.random() * 2000);
-  });
+  try {
+    chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (res) => {
+      if (chrome.runtime.lastError) {
+        chrome.runtime.sendMessage({
+          type: "TASK_DONE",
+          ok: false,
+          task,
+          error: String(
+            chrome.runtime.lastError.message || chrome.runtime.lastError,
+          ),
+        });
+      } else {
+        chrome.runtime.sendMessage({
+          type: "TASK_DONE",
+          ok: res?.ok,
+          task,
+          error: res?.error,
+        });
+      }
+      console.log("Exec result", res);
+      scheduleNext(4000 + Math.random() * 2000);
+    });
+  } catch (e) {
+    chrome.runtime.sendMessage({
+      type: "TASK_DONE",
+      ok: false,
+      task,
+      error: String(e),
+    });
+    scheduleNext(5000);
+  }
 }
