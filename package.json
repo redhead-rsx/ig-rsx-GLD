@@ -1,14 +1,14 @@
 {
   "name": "ig-rsx-gold",
-  "version": "0.1.0",
-  "description": "Extensão Chrome que segue perfis e curte a primeira mídia (clique na UI).",
+  "version": "0.2.0",
+  "description": "Extensão Chrome que segue e curte automaticamente no Instagram (via APIs diretas, sem UI).",
   "author": "Dias",
   "license": "MIT",
   "private": true,
   "scripts": {
     "lint": "eslint . --ext .js",
     "format": "prettier --write .",
-    "zip": "zip -r dist/instagram-bot-ui.zip . -x \"node_modules/*\" \"dist/*\""
+    "zip": "mkdir -p dist && zip -r dist/instagram-bot-silent.zip . -x \"node_modules/*\" \"dist/*\""
   },
   "devDependencies": {
     "eslint": "^8.57.0",
