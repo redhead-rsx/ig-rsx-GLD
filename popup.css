@@ -1,5 +1,155 @@
-body { font-family: sans-serif; padding: 10px; width: 250px; }
-h1 { font-size: 16px; margin: 0 0 8px; }
-input { width: 100%; margin-bottom: 8px; }
-button { margin-right: 6px; }
-pre { font-size: 11px; color: #555; white-space: pre-wrap; }
+body {
+  width: 380px;
+  background: #1f1f1f;
+  color: #f1f1f1;
+  font-family: system-ui, sans-serif;
+  margin: 0;
+}
+
+#topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background: #222;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: #f1f1f1;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  border-bottom: 2px solid #e02424;
+}
+
+.card {
+  background: #2a2a2a;
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+button {
+  background: #e02424;
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #ff3b30;
+}
+
+#followersTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#followersTable th,
+#followersTable td {
+  padding: 4px;
+}
+
+#followersTable tr:nth-child(even) {
+  background: #333;
+}
+
+#pagination {
+  text-align: center;
+  margin-top: 4px;
+}
+
+#pagination button {
+  margin: 0 2px;
+  background: #444;
+}
+
+#footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px;
+  background: #222;
+}
+
+.dropdown {
+  position: relative;
+}
+
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  background: #2a2a2a;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.dropdown-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  padding: 8px;
+  border: none;
+  color: #f1f1f1;
+}
+
+.dropdown-menu button:hover {
+  background: #444;
+}
+
+#toast {
+  position: fixed;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  padding: 6px 12px;
+  border-radius: 4px;
+  display: none;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+#runControls button {
+  margin-right: 4px;
+}
+
+label {
+  display: block;
+  margin: 4px 0;
+}
+
+input[type="number"] {
+  width: 60px;
+}
+
+input[type="range"] {
+  vertical-align: middle;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #555;
+}
+
+#followersTable td:first-child {
+  width: 40px;
+}
