@@ -1,18 +1,115 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <title>IG Silent Bot</title>
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body>
-  <h1>IG Silent Bot</h1>
-  <input id="username" placeholder="username">
-  <button id="follow">Seguir</button>
-  <button id="like">Curtir última</button>
-  <button id="start">Rodar fila</button>
-  <button id="stop">Parar</button>
-  <pre id="log"></pre>
-  <script src="popup.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <title>IG Silent Bot</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div id="topbar">
+      <div id="tabs">
+        <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
+        <button class="tab-btn" data-tab="config">Configurações</button>
+      </div>
+      <div id="currentUser"></div>
+    </div>
+
+    <div id="queue" class="tab-content active">
+      <div id="runControls" class="card">
+        <button id="start">Iniciar</button>
+        <button id="stop">Parar</button>
+      </div>
+
+      <div id="actionSelect" class="card">
+        <label><input type="radio" name="mode" value="follow" /> Seguir</label>
+        <label
+          ><input type="radio" name="mode" value="follow-like" /> Seguir +
+          Curtir <input id="likeCount" type="number" min="1" max="3" value="1"
+        /></label>
+        <label
+          ><input type="radio" name="mode" value="unfollow" /> Deixar de
+          seguir</label
+        >
+      </div>
+
+      <div id="followersContainer" class="card">
+        <table id="followersTable">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Usuário</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="pagination"></div>
+      </div>
+    </div>
+
+    <div id="config" class="tab-content">
+      <div class="card">
+        <label
+          >Aguardar <input id="cfgActionDelay" type="number" min="0" /> segundos
+          após seguir/deixar de seguir/curtir</label
+        >
+        <label
+          >Aguardar <input id="cfgSkipDelay" type="number" min="0" /> segundos
+          após pular</label
+        >
+        <label
+          >Tempo de espera aleatório de até
+          <input id="cfgRandomPercent" type="range" min="0" max="100" />%</label
+        >
+      </div>
+      <div class="card">
+        <label
+          >Tente novamente
+          <input id="cfgRetrySoft" type="number" min="0" /> minutos após limite
+          suave de taxa</label
+        >
+        <label
+          >Tente novamente
+          <input id="cfgRetryHard" type="number" min="0" /> horas após limite
+          rígido</label
+        >
+        <label
+          >Tente novamente
+          <input id="cfgRetry429" type="number" min="0" /> minutos após limite
+          de taxa 429</label
+        >
+      </div>
+      <div class="card">
+        <label
+          ><input id="cfgKeepFollowers" type="checkbox" /> Não deixar de seguir
+          pessoas que me seguem</label
+        >
+        <label
+          ><input id="cfgUnfollowOlderThanChk" type="checkbox" /> Deixar de
+          seguir pessoas que comecei a seguir há mais de
+          <input id="cfgUnfollowOlderThan" type="number" min="0" /> dias (mesmo
+          se me seguirem)</label
+        >
+        <label
+          ><input id="cfgNotUnfollowYoungerThanChk" type="checkbox" /> Não
+          deixar de seguir pessoas que comecei a seguir há menos de
+          <input id="cfgNotUnfollowYoungerThan" type="number" min="0" />
+          dias</label
+        >
+      </div>
+    </div>
+
+    <div id="footer">
+      <div class="dropdown">
+        <button id="loadBtn">Carregar Contas</button>
+        <div id="loadMenu" class="dropdown-menu">
+          <button id="loadFollowers">Carregar Seguidores</button>
+        </div>
+      </div>
+      <button id="process">Processar Fila</button>
+    </div>
+
+    <div id="toast"></div>
+
+    <script src="popup.js"></script>
+  </body>
 </html>
