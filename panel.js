@@ -56,9 +56,25 @@ function bindDropdown() {
   });
 }
 
-function extractUsernameFromUrl(url) {
-  const m = url && url.match(/^https?:\/\/(www\.)?instagram\.com\/([^\/?#]+)\/?.*/);
-  return m ? m[2] : null;
+export function extractUsernameFromUrl(url) {
+  const m = url.match(
+    /^https?:\/\/(www\.)?instagram\.com\/([^\/\?#]+)(?:[\/\?#].*)?$/i
+  );
+  const u = m?.[2] || "";
+  const blacklist = new Set([
+    "explore",
+    "accounts",
+    "reels",
+    "p",
+    "stories",
+    "direct",
+    "challenge",
+    "graphql",
+    "api",
+    "about",
+    "legal",
+  ]);
+  return blacklist.has(u.toLowerCase()) ? null : u;
 }
 
 function execTask(task) {
@@ -84,6 +100,21 @@ function setLocal(key, value) {
   return new Promise((resolve) => {
     chrome.storage.local.set({ [key]: value }, resolve);
   });
+}
+
+async function lookupUserId(username) {
+  const max = 2;
+  let lastErr;
+  for (let i = 0; i < max; i++) {
+    const res = await execTask({ kind: "LOOKUP", username }).catch((e) => ({
+      ok: false,
+      error: String(e),
+    }));
+    if (res?.ok && res.out?.userId) return res.out.userId;
+    lastErr = res?.error || "unknown";
+    await new Promise((r) => setTimeout(r, 300 * (i + 1)));
+  }
+  throw new Error("lookup_failed:" + lastErr);
 }
 
 async function loadFollowersHandler() {
@@ -126,19 +157,13 @@ async function loadFollowersHandler() {
         10,
       ) || 0;
   }
-  let lookup;
-  for (let i = 0; i < 2; i++) {
-    try {
-      lookup = await execTask({ kind: "LOOKUP", username });
-      if (lookup && lookup.userId) break;
-    } catch (e) {}
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  if (!lookup || !lookup.userId) {
-    alert("Não foi possível resolver o usuário.");
+  let userId;
+  try {
+    userId = await lookupUserId(username);
+  } catch (err) {
+    alert("Não foi possível resolver o usuário. Detalhes: " + err.message);
     return;
   }
-  const userId = lookup.userId;
   let cursor = followersState.cursor;
   let totalLoaded = followersState.totalLoaded;
   while (followers.length < 200) {
