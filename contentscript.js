@@ -8,30 +8,6 @@
   }
 })();
 
-async function togglePanel() {
-  let root = document.getElementById("igx-panel-root");
-  if (!root) {
-    root = document.createElement("div");
-    root.id = "igx-panel-root";
-    root.attachShadow({ mode: "open" });
-    document.documentElement.appendChild(root);
-    const html = await fetch(chrome.runtime.getURL("panel.html")).then((r) =>
-      r.text(),
-    );
-    root.shadowRoot.innerHTML = html;
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = chrome.runtime.getURL("panel.css");
-    root.shadowRoot.appendChild(link);
-    const script = document.createElement("script");
-    script.type = "module";
-    script.src = chrome.runtime.getURL("panel.js");
-    root.shadowRoot.appendChild(script);
-  } else {
-    root.remove();
-  }
-}
-
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "EXEC_TASK") {
     window.postMessage({ __BOT__: true, type: "TASK", task: msg.task }, "*");
@@ -44,7 +20,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     window.addEventListener("message", onMsg);
     return true;
   }
-  if (msg.type === "TOGGLE_PANEL") {
-    togglePanel();
+});
+
+chrome.runtime.onMessage.addListener(async (msg, _s, _send) => {
+  if (msg?.type !== "TOGGLE_PANEL") return;
+  let root = document.getElementById("igx-panel-root");
+  if (root) {
+    root.remove();
+    return;
   }
+  root = document.createElement("div");
+  root.id = "igx-panel-root";
+  const shadow = root.attachShadow({ mode: "open" });
+  document.documentElement.appendChild(root);
+
+  const html = await fetch(chrome.runtime.getURL("panel.html")).then((r) =>
+    r.text(),
+  );
+  shadow.innerHTML = html;
+
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = chrome.runtime.getURL("panel.css");
+  shadow.appendChild(link);
+
+  const script = document.createElement("script");
+  script.type = "module";
+  script.src = chrome.runtime.getURL("panel.js");
+  shadow.appendChild(script);
 });

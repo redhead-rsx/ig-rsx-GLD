@@ -1,6 +1,10 @@
 /* root do overlay (fora do #panel) */
+/* garanta que body/html da página não interfiram */
 :host, :root {
   all: initial;
+}
+:host, :host * {
+  box-sizing: border-box;
 }
 
 #igx-root {
