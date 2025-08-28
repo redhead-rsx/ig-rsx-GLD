@@ -3,6 +3,7 @@ let followers = [];
 let currentPage = 1;
 let currentUsername = null;
 let followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
+let lastRenderedUser = null;
 let queueView = null;
 let panelDoc;
 let nextWaitMs = 0;
@@ -14,6 +15,10 @@ const STATE_KEY = (user) => `silent.followers.${user}`;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
 }
 
 export function init(root) {
@@ -200,6 +205,11 @@ async function saveState() {
 async function restoreState() {
   currentUsername = extractUsernameFromUrl(location.href);
   if (!currentUsername) return;
+  if (currentUsername !== lastRenderedUser) {
+    followers = [];
+    queueView = null;
+    return;
+  }
   await loadState();
   currentPage = 1;
   if (queueView && queueView.items?.length) {
@@ -231,29 +241,27 @@ async function loadFollowersOfCurrentProfile() {
     alert("Abra um perfil do Instagram para carregar seguidores.");
     return;
   }
-
-  const saved = (await chrome.storage.local.get(STATE_KEY(username)))[
-    STATE_KEY(username)
-  ];
-  let startIndex = 0;
+  const key = STATE_KEY(username);
+  const saved = (await chrome.storage.local.get(key))[key];
   let resume = false;
-  if (saved?.users?.length) {
-    if (confirm("Você gostaria de tentar continuar de onde parou?")) {
-      resume = true;
-    } else {
-      const v = prompt(
-        "Digite o número do seguidor para começar (0 = mais recente).",
-        "0"
-      );
-      startIndex = Math.max(0, parseInt(v || "0", 10) || 0);
+  if (saved?.users?.length || saved?.cursor) {
+    resume = confirm("Continuar de onde parou?");
+    if (!resume) {
+      await chrome.storage.local.remove(key);
+      clearUIList();
     }
-  } else {
-    const v = prompt(
-      "Digite o número do seguidor para começar (0 = mais recente).",
-      "0"
-    );
-    startIndex = Math.max(0, parseInt(v || "0", 10) || 0);
   }
+  const limit = clamp(
+    parseInt(qs("#inputCount").value || "200", 10),
+    0,
+    200,
+  );
+  await carregarSeguidores(username, { resume, limit });
+}
+
+async function carregarSeguidores(username, { resume, limit }) {
+  const key = STATE_KEY(username);
+  let state = resume ? (await chrome.storage.local.get(key))[key] : null;
 
   let userId;
   try {
@@ -263,11 +271,21 @@ async function loadFollowersOfCurrentProfile() {
     return;
   }
 
-  const MAX = 200;
-  let collected = resume ? saved.users || [] : [];
-  let cursor = resume ? saved.cursor || null : null;
+  let collected = resume && state?.users ? state.users.slice() : [];
+  let cursor = resume ? state?.cursor || null : null;
 
-  while (collected.length < MAX) {
+  if (limit === 0) {
+    state = { users: [], cursor: null, totalLoaded: 0, lastIndex: 0 };
+    await chrome.storage.local.set({ [key]: state });
+    currentUsername = username;
+    followersState.cursor = state.cursor;
+    followersState.totalLoaded = state.totalLoaded;
+    followersState.lastIndex = state.lastIndex;
+    renderFollowersTable(username, state.users);
+    return;
+  }
+
+  while (collected.length < limit) {
     const res = await execTask({
       kind: "LIST_FOLLOWERS",
       userId,
@@ -281,26 +299,27 @@ async function loadFollowersOfCurrentProfile() {
     }
 
     const batch = res.out.users || [];
-    collected = collected.concat(batch);
+    if (!batch.length) break;
+    const room = limit - collected.length;
+    collected = collected.concat(
+      batch.slice(0, room).map((u) => ({
+        id: u.id,
+        username: u.username,
+        status: {},
+      })),
+    );
     cursor = res.out.nextCursor || null;
-    if (!cursor || batch.length === 0) break;
+    if (!cursor) break;
     await sleep(200);
   }
 
-  if (startIndex > 0 && collected.length > startIndex) {
-    collected = collected.slice(startIndex);
-  }
-
-  const state = {
-    users: collected
-      .slice(0, MAX)
-      .map((u) => ({ id: u.id, username: u.username, status: {} })),
+  state = {
+    users: collected,
     cursor,
     totalLoaded: collected.length,
-    lastIndex: resume ? saved.lastIndex || 0 : startIndex,
+    lastIndex: 0,
   };
-
-  await chrome.storage.local.set({ [STATE_KEY(username)]: state });
+  await chrome.storage.local.set({ [key]: state });
 
   currentUsername = username;
   followersState.cursor = state.cursor;
@@ -311,9 +330,20 @@ async function loadFollowersOfCurrentProfile() {
 
 function renderFollowersTable(username, users) {
   currentUsername = username;
+  lastRenderedUser = username;
   followers = users || [];
   currentPage = 1;
   renderFollowers();
+}
+
+function clearUIList() {
+  const body = qs("#followersTable tbody");
+  if (body) body.innerHTML = "";
+  const pag = qs("#pagination");
+  if (pag) pag.innerHTML = "";
+  followers = [];
+  followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
+  currentPage = 1;
 }
 
 function renderStatus(td, st) {
@@ -379,6 +409,7 @@ function renderFollowers() {
 }
 
 function renderQueue() {
+  lastRenderedUser = currentUsername;
   const tbody = panelDoc.querySelector("#followersTable tbody");
   tbody.innerHTML = "";
   if (!queueView) return;
