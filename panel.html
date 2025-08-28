@@ -1,32 +1,41 @@
-<div id="panel">
-  <div id="tabs">
-    <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
-    <button class="tab-btn" data-tab="settings">Configurações</button>
-  </div>
-
-  <div id="tab-queue" class="tab-content active">
-    <div id="runControls" class="card">
-      <button id="start">Iniciar</button>
-      <button id="stop">Parar</button>
+<div id="igx-root">
+  <div id="panel">
+    <div id="tabs">
+      <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
+      <button class="tab-btn" data-tab="settings">Configurações</button>
     </div>
 
-    <div id="followersContainer" class="card">
-      <table id="followersTable">
-        <thead>
-          <tr>
-            <th></th>
-            <th></th>
-            <th>Usuário</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <div id="pagination"></div>
-    </div>
-  </div>
+    <div id="tab-queue" class="tab-content active">
+      <div id="runControls" class="card">
+        <button id="start">Iniciar</button>
+        <button id="stop">Parar</button>
+      </div>
 
-  <div id="tab-settings" class="tab-content">
+      <div id="followersContainer" class="card">
+        <table id="followersTable">
+          <thead>
+            <tr>
+              <th></th>
+              <th></th>
+              <th>Usuário</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="pagination"></div>
+      </div>
+
+      <div id="runLogCard" class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <strong>Log de execução</strong>
+          <button id="clearLog" style="background:#444">Limpar</button>
+        </div>
+        <div id="runLog" style="max-height:180px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;background:#111;padding:6px;border-radius:4px;margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <div id="tab-settings" class="tab-content">
     <div class="card">
       <label>Aguardar <input id="cfgActionDelay" type="number" min="0" /> segundos após seguir/deixar de seguir/curtir</label>
       <label>Aguardar <input id="cfgSkipDelay" type="number" min="0" /> segundos após pular</label>
@@ -44,30 +53,39 @@
     </div>
   </div>
 
-  <div id="footer">
-    <div class="dropdown">
-      <button id="loadBtn">Carregar Contas</button>
-      <div id="loadMenu" class="dropdown-menu">
-        <button id="loadFollowers">Carregar Seguidores</button>
+    <div id="footer">
+      <div class="dropdown">
+        <button id="loadBtn">Carregar Contas</button>
+        <div id="loadMenu" class="dropdown-menu">
+          <button id="loadFollowers">Carregar Seguidores</button>
+        </div>
+      </div>
+      <button id="process">Processar Fila</button>
+    </div>
+
+    <div id="actionDialog" class="dialog">
+      <div class="dialog-content">
+        <label><input type="radio" name="actionMode" value="follow" checked /> Seguir</label>
+        <label>
+          <input type="radio" name="actionMode" value="follow-like" /> Seguir + Curtir
+          <input id="dlgLikeCount" type="number" min="1" max="3" value="1" />
+        </label>
+        <label><input type="radio" name="actionMode" value="unfollow" /> Deixar de seguir</label>
+        <div class="dialog-buttons">
+          <button id="dlgCancel">Cancelar</button>
+          <button id="dlgAdd">Iniciar</button>
+        </div>
       </div>
     </div>
-    <button id="process">Processar Fila</button>
-  </div>
 
-  <div id="actionDialog" class="dialog">
-    <div class="dialog-content">
-      <label><input type="radio" name="actionMode" value="follow" checked /> Seguir</label>
-      <label>
-        <input type="radio" name="actionMode" value="follow-like" /> Seguir + Curtir
-        <input id="dlgLikeCount" type="number" min="1" max="3" value="1" />
-      </label>
-      <label><input type="radio" name="actionMode" value="unfollow" /> Deixar de seguir</label>
-      <div class="dialog-buttons">
-        <button id="dlgCancel">Cancelar</button>
-        <button id="dlgAdd">Iniciar</button>
-      </div>
-    </div>
+    <div id="toast"></div>
   </div>
-
-  <div id="toast"></div>
+</div>
+<div id="runHud" style="
+  position: fixed; bottom: 12px; right: 440px; z-index: 2147483647;
+  background:#222; color:#fff; padding:8px 10px; border-radius:8px;
+  box-shadow:0 2px 8px rgba(0,0,0,.5); font-size:13px; line-height:1.3;">
+  <div><strong>Progresso:</strong> <span id="hudProgress">0/0</span></div>
+  <div><strong>Ação:</strong> <span id="hudAction">—</span></div>
+  <div><strong>Próxima em:</strong> <span id="hudCountdown">--:--</span></div>
 </div>
