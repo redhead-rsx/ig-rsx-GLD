@@ -91,6 +91,71 @@ async function lookupUserIdRobust(username) {
   throw new Error("lookup_failed:" + lastErr);
 }
 
+async function firstMediaFromV1(username) {
+  const res = await fetch(
+    `/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=12`,
+    { credentials: "include", headers: igHeaders() },
+  );
+  if (!res.ok) throw new Error("http_" + res.status);
+  const j = await res.json();
+  const item = (j?.items || []).find((it) => it && it.pk && !it.has_liked);
+  return item?.pk || null;
+}
+
+async function mediaIdFromShortcode(shortcode) {
+  const r = await fetch(`/p/${shortcode}/?__a=1&__d=dis`, {
+    credentials: "include",
+  });
+  const j = await r.json().catch(() => ({}));
+  return j?.graphql?.shortcode_media?.id || null;
+}
+
+async function firstMediaFromGraphQL(username) {
+  const body = new URLSearchParams({
+    doc_id: "8633614153419931",
+    variables: JSON.stringify({ id: null, username, fetch_media_count: 12 }),
+  });
+  const r = await fetch("/graphql/query", {
+    method: "POST",
+    credentials: "include",
+    headers: igHeaders({
+      "content-type": "application/x-www-form-urlencoded",
+    }),
+    body,
+  });
+  if (!r.ok) throw new Error("http_" + r.status);
+  const j = await r.json();
+  const node = j?.data?.user?.edge_owner_to_timeline_media?.edges?.[0]?.node;
+  if (node?.id) return node.id;
+  if (node?.shortcode) return await mediaIdFromShortcode(node.shortcode);
+  return null;
+}
+
+async function getFirstLikeableMediaId(username) {
+  try {
+    const pk = await firstMediaFromV1(username);
+    if (pk) return pk;
+  } catch {}
+  const pk2 = await firstMediaFromGraphQL(username);
+  if (!pk2) throw new Error("no_media");
+  return pk2;
+}
+
+async function likeMedia(mediaId) {
+  const res = await fetch(`/web/likes/${mediaId}/like/`, {
+    method: "POST",
+    credentials: "include",
+    headers: igHeaders({
+      "content-type": "application/x-www-form-urlencoded",
+    }),
+    body: "",
+  });
+  if (!res.ok) throw new Error("http_" + res.status);
+  const j = await res.json().catch(() => ({}));
+  if (j?.status !== "ok") throw new Error("like_failed");
+  return true;
+}
+
 export class IGRunner {
   constructor() {
     this.ig = new IGClient();
@@ -102,8 +167,12 @@ export class IGRunner {
         return await this.ig.follow(task.userId);
       case "UNFOLLOW":
         return await this.ig.unfollow(task.userId);
-      case "LIKE":
-        return await this.ig.like(task.mediaId);
+      case "LIKE": {
+        const { username } = task;
+        const mediaId = await getFirstLikeableMediaId(username);
+        await likeMedia(mediaId);
+        return { ok: true };
+      }
       case "LOOKUP": {
         const userId = await lookupUserIdRobust(task.username);
         return { userId };
@@ -112,8 +181,6 @@ export class IGRunner {
         return await this.ig.listFollowers(task);
       case "LIST_FOLLOWING":
         return await this.ig.listFollowing(task);
-      case "LAST_MEDIA":
-        return await this.ig.lastMediaIdFromUserId(task.userId, task.username);
       default:
         throw new Error("unknown_task");
     }
