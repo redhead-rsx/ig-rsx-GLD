@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="popup">
+    <div id="tabs">
+      <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
+      <button class="tab-btn" data-tab="settings">Configurações</button>
+    </div>
+
+    <div id="tab-queue" class="tab-content active">
+      <div id="toolbar" class="card">
+        <button id="btnStart">Iniciar</button>
+        <button id="btnStop">Parar</button>
+        <div class="dropdown">
+          <button id="btnLoadMenu">Carregar Contas</button>
+          <div id="loadMenu" class="dropdown-menu">
+            <button id="btnGetAllUsersFollowers">Carregar Seguidores da Página Atual</button>
+          </div>
+        </div>
+        <div class="dropdown">
+          <button id="btnProcessQueue">Processar Fila</button>
+          <div id="processMenu" class="dropdown-menu">
+            <label><input type="radio" id="radioFollow" name="processAction" value="follow" checked /> Seguir</label>
+            <label><input type="radio" id="radioFollowAndLike" name="processAction" value="follow-like" /> Seguir + Curtir <input id="numberFollowLikeLatestPics" type="number" min="0" max="12" value="0" /></label>
+            <label><input type="radio" id="radioUnFollow" name="processAction" value="unfollow" /> Deixar de Seguir</label>
+            <div class="dialog-buttons"><button id="btnProcessStart">Iniciar</button></div>
+          </div>
+        </div>
+        <span id="igBotQueueCount">0</span>/<span id="igBotQueueSelectedCount">0</span>
+      </div>
+
+      <div id="igBotQueueContainer" class="card">
+        <table id="queueTable" class="tablesorter">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="chkAll" /></th>
+              <th></th>
+              <th>@username</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="pager" class="pager">
+          <button class="prev">‹</button>
+          <span class="pagedisplay"></span>
+          <button class="next">›</button>
+          <select class="pagesize">
+            <option selected value="10">10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+          </select>
+          <input type="text" class="gotoPage" size="3" />
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-settings" class="tab-content">
+      <div class="card">
+        <h3>Tempos de Espera</h3>
+        <label>Aguardar <input id="waitAfterActionSec" type="number" min="0" /> segundos após ação</label>
+        <label>Aguardar <input id="waitAfterSkipSec" type="number" min="0" /> segundos após pular</label>
+        <label>Aleatório até <input id="randomWaitPct" type="number" min="0" max="100" />%</label>
+      </div>
+      <div class="card">
+        <h3>Opções de Deixar de Seguir</h3>
+        <label><input id="optDontUnfollowFollowers" type="checkbox" /> Não deixar de seguir quem me segue</label>
+        <label><input id="optDontUnfollowUnderChk" type="checkbox" /> Não deixar de seguir antes de <input id="optDontUnfollowUnderDays" type="number" min="0" /> dias</label>
+        <label><input id="optDontUnfollowOverChk" type="checkbox" /> Não deixar de seguir depois de <input id="optDontUnfollowOverDays" type="number" min="0" /> dias</label>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,159 @@
+#popup {
+  width: 100%;
+  height: 100%;
+  background: #1f1f1f;
+  color: #f1f1f1;
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: #f1f1f1;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+#tabs {
+  display: flex;
+  background: #222;
+}
+
+.tab-btn.active {
+  border-bottom: 2px solid #e02424;
+}
+
+.card {
+  background: #2a2a2a;
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+button {
+  background: #e02424;
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #ff3b30;
+}
+
+#queueTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#queueTable th,
+#queueTable td {
+  padding: 4px;
+}
+
+#queueTable tr:nth-child(even) {
+  background: #333;
+}
+
+#pager {
+  text-align: center;
+  margin-top: 4px;
+}
+
+#pager button {
+  margin: 0 2px;
+  background: #444;
+}
+
+.dropdown {
+  position: relative;
+}
+
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: #2a2a2a;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  z-index: 10;
+  padding: 8px;
+}
+
+.dropdown-menu label {
+  display: block;
+  margin: 4px 0;
+}
+
+.dropdown-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  padding: 8px;
+  border: none;
+  color: #f1f1f1;
+}
+
+.dropdown-menu button:hover {
+  background: #444;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+label {
+  display: block;
+  margin: 4px 0;
+}
+
+input[type="number"] {
+  width: 60px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #555;
+}
+
+#queueTable td:first-child {
+  width: 40px;
+}
+
+#queueTable td:nth-child(2) {
+  width: 40px;
+}
+
+.badge {
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.badge--seguido {
+  background: #2ecc71;
+  color: #fff;
+}
+
+.badge--like {
+  background: #e57373;
+  color: #fff;
+}
+
+.badge--unfollow {
+  background: #777;
+  color: #fff;
+}

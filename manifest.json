@@ -8,7 +8,9 @@
   "background": {
     "service_worker": "background.js"
   },
-  "action": {},
+  "action": {
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": ["https://www.instagram.com/*"],
