@@ -26,10 +26,15 @@ export function init(root) {
   (async () => {
     const username = extractUsernameFromUrl(location.href);
     if (username) {
+      currentUsername = username;
       await chrome.storage.local.remove(STATE_KEY(username));
       await chrome.storage.local.remove(`silent.queueView.${username}`);
-      clearUIList();
+    } else {
+      currentUsername = null;
     }
+    queueView = null;
+    clearUIList();
+    clearRunLog();
   })();
   bindTabs();
   bindDropdown();
@@ -50,7 +55,6 @@ export function init(root) {
     .forEach((r) => r.addEventListener("change", onDialogModeChange));
   onDialogModeChange();
   loadConfig();
-  restoreState().then(restoreLog);
   updateRunButtons(false);
   on("#clearLog", "click", clearRunLog);
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
@@ -342,6 +346,14 @@ function clearUIList() {
   followers = [];
   followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
   currentPage = 1;
+  queueView = null;
+  lastRenderedUser = null;
+  const hp = qs("#hudProgress");
+  if (hp) hp.textContent = "0/0";
+  const ha = qs("#hudAction");
+  if (ha) ha.textContent = "—";
+  const hc = qs("#hudCountdown");
+  if (hc) hc.textContent = "--:--";
 }
 
 function renderStatus(td, st) {

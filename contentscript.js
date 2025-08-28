@@ -27,8 +27,9 @@ chrome.runtime.onMessage.addListener(async (msg, _s, _send) => {
   let root = document.getElementById("igx-panel-root");
   if (root) {
     root.remove();
-    return;
+    if (!msg.open) return;
   }
+  if (msg.open === false) return;
   root = document.createElement("div");
   root.id = "igx-panel-root";
   const shadow = root.attachShadow({ mode: "open" });
