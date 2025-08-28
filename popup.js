@@ -260,15 +260,14 @@ async function confirmProcess() {
       error: undefined,
     };
     if (mode === "follow") {
-      items.push({ kind: "FOLLOW", userId: u.id });
+      items.push({ kind: "FOLLOW", userId: u.id, username: u.username });
     } else if (mode === "follow-like") {
-      items.push({ kind: "FOLLOW", userId: u.id });
+      items.push({ kind: "FOLLOW", userId: u.id, username: u.username });
       for (let i = 0; i < likeCount; i++) {
-        items.push({ kind: "LAST_MEDIA", userId: u.id, username: u.username });
-        items.push({ kind: "LIKE", userId: u.id });
+        items.push({ kind: "LIKE", userId: u.id, username: u.username });
       }
     } else if (mode === "unfollow") {
-      items.push({ kind: "UNFOLLOW", userId: u.id });
+      items.push({ kind: "UNFOLLOW", userId: u.id, username: u.username });
     }
     u.status = st;
     snapshot.push({ userId: u.id, username: u.username, likesPlanned: st.likesTotal });

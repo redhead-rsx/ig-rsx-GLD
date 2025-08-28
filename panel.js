@@ -23,6 +23,14 @@ function clamp(n, a, b) {
 
 export function init(root) {
   panelDoc = root;
+  (async () => {
+    const username = extractUsernameFromUrl(location.href);
+    if (username) {
+      await chrome.storage.local.remove(STATE_KEY(username));
+      await chrome.storage.local.remove(`silent.queueView.${username}`);
+      clearUIList();
+    }
+  })();
   bindTabs();
   bindDropdown();
   panelDoc
@@ -241,27 +249,17 @@ async function loadFollowersOfCurrentProfile() {
     alert("Abra um perfil do Instagram para carregar seguidores.");
     return;
   }
-  const key = STATE_KEY(username);
-  const saved = (await chrome.storage.local.get(key))[key];
-  let resume = false;
-  if (saved?.users?.length || saved?.cursor) {
-    resume = confirm("Continuar de onde parou?");
-    if (!resume) {
-      await chrome.storage.local.remove(key);
-      clearUIList();
-    }
-  }
   const limit = clamp(
     parseInt(qs("#inputCount").value || "200", 10),
     0,
     200,
   );
-  await carregarSeguidores(username, { resume, limit });
+  await carregarSeguidores(username, { limit });
 }
 
-async function carregarSeguidores(username, { resume, limit }) {
+async function carregarSeguidores(username, { limit }) {
   const key = STATE_KEY(username);
-  let state = resume ? (await chrome.storage.local.get(key))[key] : null;
+  let state = null;
 
   let userId;
   try {
@@ -271,8 +269,8 @@ async function carregarSeguidores(username, { resume, limit }) {
     return;
   }
 
-  let collected = resume && state?.users ? state.users.slice() : [];
-  let cursor = resume ? state?.cursor || null : null;
+  let collected = [];
+  let cursor = null;
 
   if (limit === 0) {
     state = { users: [], cursor: null, totalLoaded: 0, lastIndex: 0 };
@@ -536,7 +534,6 @@ async function confirmActionDialog() {
     } else if (mode === "follow-like") {
       items.push({ kind: "FOLLOW", userId: u.id, username: u.username });
       for (let i = 0; i < likeCount; i++) {
-        items.push({ kind: "LAST_MEDIA", userId: u.id, username: u.username });
         items.push({
           kind: "LIKE",
           userId: u.id,
