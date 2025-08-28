@@ -1,6 +1,4 @@
 // Injeta scripts e cria ponte com SW
-let panelRoot = null;
-
 (function inject() {
   for (const f of ["igClient.js", "runner.js", "injected.js"]) {
     const s = document.createElement("script");
@@ -11,29 +9,27 @@ let panelRoot = null;
 })();
 
 async function togglePanel() {
-  if (panelRoot) {
-    panelRoot.remove();
-    panelRoot = null;
-    return;
+  let root = document.getElementById("igx-panel-root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "igx-panel-root";
+    root.attachShadow({ mode: "open" });
+    document.documentElement.appendChild(root);
+    const html = await fetch(chrome.runtime.getURL("panel.html")).then((r) =>
+      r.text(),
+    );
+    root.shadowRoot.innerHTML = html;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = chrome.runtime.getURL("panel.css");
+    root.shadowRoot.appendChild(link);
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = chrome.runtime.getURL("panel.js");
+    root.shadowRoot.appendChild(script);
+  } else {
+    root.remove();
   }
-  panelRoot = document.createElement("div");
-  panelRoot.id = "igx-panel-root";
-  Object.assign(panelRoot.style, {
-    position: "fixed",
-    inset: "0",
-    zIndex: "2147483647",
-  });
-  const shadow = panelRoot.attachShadow({ mode: "open" });
-  const html = await (await fetch(chrome.runtime.getURL("panel.html"))).text();
-  shadow.innerHTML = html;
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = chrome.runtime.getURL("panel.css");
-  shadow.appendChild(link);
-  const url = chrome.runtime.getURL("panel.js");
-  const mod = await import(url);
-  if (typeof mod.init === "function") mod.init(shadow);
-  document.documentElement.appendChild(panelRoot);
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

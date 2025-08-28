@@ -5,6 +5,11 @@ let currentUsername = null;
 let followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
 let queueView = null;
 let panelDoc;
+let nextWaitMs = 0;
+let countdownTimer = null;
+const qs = (sel) => panelDoc?.querySelector(sel);
+const on = (sel, ev, fn) => qs(sel)?.addEventListener(ev, fn);
+const LOG_KEY = (user) => `silent.log.${user}`;
 const STATE_KEY = (user) => `silent.followers.${user}`;
 
 function sleep(ms) {
@@ -32,8 +37,9 @@ export function init(root) {
     .forEach((r) => r.addEventListener("change", onDialogModeChange));
   onDialogModeChange();
   loadConfig();
-  restoreState();
+  restoreState().then(restoreLog);
   updateRunButtons(false);
+  on("#clearLog", "click", clearRunLog);
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 }
 
@@ -115,6 +121,36 @@ function setLocal(key, value) {
   });
 }
 
+function logLine(html) {
+  const box = qs("#runLog");
+  if (!box) return;
+  const ts = new Date().toLocaleTimeString();
+  const line = `<div>[${ts}] ${html}</div>`;
+  box.insertAdjacentHTML("afterbegin", line);
+  if (!currentUsername) return;
+  const key = LOG_KEY(currentUsername);
+  getLocal(key).then((log) => {
+    const arr = Array.isArray(log) ? log : [];
+    arr.unshift(line);
+    if (arr.length > 500) arr.length = 500;
+    setLocal(key, arr);
+  });
+}
+
+async function restoreLog() {
+  if (!currentUsername) return;
+  const key = LOG_KEY(currentUsername);
+  const log = (await getLocal(key)) || [];
+  const box = qs("#runLog");
+  if (box) box.innerHTML = log.join("");
+}
+
+function clearRunLog() {
+  const box = qs("#runLog");
+  if (box) box.innerHTML = "";
+  if (currentUsername) setLocal(LOG_KEY(currentUsername), []);
+}
+
 function updateRunButtons(running) {
   panelDoc.getElementById("start").disabled = running;
   panelDoc.getElementById("stop").disabled = !running;
@@ -126,11 +162,13 @@ function startRun() {
     if (!cont) return;
   }
   chrome.runtime.sendMessage({ type: "RUN_START" });
+  logLine("Execução iniciada");
   updateRunButtons(true);
 }
 
 function stopRun() {
   chrome.runtime.sendMessage({ type: "RUN_STOP" });
+  logLine("Execução parada");
   updateRunButtons(false);
 }
 
@@ -463,15 +501,21 @@ async function confirmActionDialog() {
       error: undefined,
     };
     if (mode === "follow") {
-      items.push({ kind: "FOLLOW", userId: u.id });
+      items.push({ kind: "FOLLOW", userId: u.id, username: u.username });
     } else if (mode === "follow-like") {
-      items.push({ kind: "FOLLOW", userId: u.id });
+      items.push({ kind: "FOLLOW", userId: u.id, username: u.username });
       for (let i = 0; i < likeCount; i++) {
         items.push({ kind: "LAST_MEDIA", userId: u.id, username: u.username });
-        items.push({ kind: "LIKE", userId: u.id });
+        items.push({
+          kind: "LIKE",
+          userId: u.id,
+          username: u.username,
+          likeIndex: i + 1,
+          likeTotal: likeCount,
+        });
       }
     } else if (mode === "unfollow") {
-      items.push({ kind: "UNFOLLOW", userId: u.id });
+      items.push({ kind: "UNFOLLOW", userId: u.id, username: u.username });
     }
     u.status = st;
     snapshot.push({
@@ -482,7 +526,9 @@ async function confirmActionDialog() {
   }
   queueView = { createdAt: Date.now(), items: snapshot };
   chrome.runtime.sendMessage({ type: "QUEUE_ADD", items });
+  logLine(`Fila criada com ${items.length} itens`);
   chrome.runtime.sendMessage({ type: "RUN_START" });
+  logLine("Execução iniciada");
   await saveState();
   currentPage = 1;
   panelDoc.querySelector('.tab-btn[data-tab="queue"]').click();
@@ -557,40 +603,82 @@ function saveConfig() {
   setLocal("silent.cfg.v1", cfg);
 }
 
-function handleRuntimeMessage(msg) {
-  if (msg?.type !== "TASK_DONE") return;
-  const { ok, task, error } = msg;
-  const u = followers.find(
-    (f) => f.id === task.userId || f.username === task.username,
-  );
-  if (!u) return;
-  const st = u.status || (u.status = {});
-  st.running = true;
-  st.queued = false;
-  if (!ok) {
-    st.error = error;
-    st.running = false;
-  } else {
-    if (task.kind === "FOLLOW") {
-      st.followed = true;
-      if (!st.likesTotal) st.running = false;
-    } else if (task.kind === "LIKE") {
-      st.likesDone = (st.likesDone || 0) + 1;
-      if (st.likesDone >= (st.likesTotal || 0)) st.running = false;
-    } else if (task.kind === "UNFOLLOW") {
-      st.unfollowed = true;
-      st.running = false;
-    }
+function startCountdown(ms) {
+  if (countdownTimer) clearInterval(countdownTimer);
+  let remain = Math.floor((ms || 0) / 1000);
+  update();
+  countdownTimer = setInterval(() => {
+    remain = Math.max(0, remain - 1);
+    update();
+    if (remain <= 0) clearInterval(countdownTimer);
+  }, 1000);
+  function update() {
+    const m = String(Math.floor(remain / 60)).padStart(2, "0");
+    const s = String(remain % 60).padStart(2, "0");
+    const el = qs("#hudCountdown");
+    if (el) el.textContent = `${m}:${s}`;
   }
-  if (!st.running) st.queued = false;
-  saveState();
+}
+
+function findRow(userId, username) {
+  return followers.find(
+    (f) => f.id === userId || f.username === username,
+  );
+}
+
+function renderRow(_row) {
   if (queueView) {
     renderQueue();
   } else {
     renderFollowers();
   }
-  if (!followers.some((u) => u.status?.queued || u.status?.running)) {
-    updateRunButtons(false);
+}
+
+function handleRuntimeMessage(msg) {
+  if (msg.type === "TASK_PROGRESS") {
+    const hp = qs("#hudProgress");
+    if (hp) hp.textContent = `${msg.processed}/${msg.total}`;
+    const t = msg.current || {};
+    const who = t.username ? "@" + t.username : t.userId || "";
+    let action = t.kind || "—";
+    if (t.kind === "LIKE" && t.likeTotal)
+      action = `LIKE ${t.likeIndex || 1}/${t.likeTotal} ${who}`;
+    else if (t.kind === "FOLLOW") action = `FOLLOW ${who}`;
+    else if (t.kind === "UNFOLLOW") action = `UNFOLLOW ${who}`;
+    const ha = qs("#hudAction");
+    if (ha) ha.textContent = action;
+    nextWaitMs = msg.nextWaitMs || 0;
+    startCountdown(nextWaitMs);
+    return;
+  }
+  if (msg.type !== "TASK_DONE") return;
+  const { ok, task, error } = msg;
+  const row = findRow(task.userId, task.username);
+  if (!row) return;
+  const st = row.status || (row.status = {});
+  if (task.kind === "FOLLOW") st.followed = !!ok;
+  if (task.kind === "LIKE") {
+    st.likesDone = Math.max((st.likesDone || 0) + (ok ? 1 : 0), 0);
+  }
+  if (task.kind === "UNFOLLOW") st.unfollowed = !!ok;
+  if (!ok) st.error = error || "erro";
+  renderRow(row);
+  saveState();
+  const who = row.username || task.username || task.userId || "";
+  if (ok) {
+    if (task.kind === "FOLLOW") logLine(`✓ FOLLOW @${who}`);
+    else if (task.kind === "LIKE")
+      logLine(`✓ LIKE (${st.likesDone || 0}/${st.likesTotal || 0}) @${who}`);
+    else if (task.kind === "UNFOLLOW") logLine(`✓ UNFOLLOW @${who}`);
+  } else {
+    logLine(`✗ ${task.kind} @${who} — ${error}`);
+  }
+}
+
+if (typeof document !== "undefined") {
+  const root = document.currentScript?.getRootNode?.();
+  if (root instanceof ShadowRoot) {
+    init(root);
   }
 }
 

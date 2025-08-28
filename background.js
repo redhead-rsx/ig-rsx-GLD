@@ -1,6 +1,8 @@
 // Service worker: gerencia fila de tarefas e agenda com alarms
 const QKEY = "silent.queue.v1";
 let running = false;
+let processedCount = 0;
+let totalCount = 0;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "QUEUE_ADD") {
@@ -8,11 +10,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
   } else if (msg.type === "RUN_START") {
     running = true;
-    scheduleNext(500);
+    processedCount = 0;
+    getQueue().then((q) => {
+      totalCount = q.length;
+      scheduleNext(500);
+    });
     sendResponse({ ok: true });
+    return true;
   } else if (msg.type === "RUN_STOP") {
     running = false;
     chrome.alarms.clear("tick");
+    processedCount = 0;
+    totalCount = 0;
     sendResponse({ ok: true });
   } else if (msg.type === "GET_QUEUE") {
     getQueue().then(q => sendResponse({ ok: true, queue: q }));
@@ -55,10 +64,30 @@ async function runOne() {
 
   // envia para content script executar no contexto da página
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) { scheduleNext(5000); return; }
+  if (!tab) {
+    const waitMs = 5000;
+    processedCount++;
+    chrome.runtime.sendMessage({
+      type: "TASK_DONE",
+      ok: false,
+      task,
+      error: "no_tab",
+    });
+    chrome.runtime.sendMessage({
+      type: "TASK_PROGRESS",
+      processed: processedCount,
+      total: totalCount,
+      current: task,
+      nextWaitMs: waitMs,
+    });
+    scheduleNext(waitMs);
+    return;
+  }
 
   try {
     chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (res) => {
+      const waitMs = 4000 + Math.random() * 2000;
+      processedCount++;
       if (chrome.runtime.lastError) {
         chrome.runtime.sendMessage({
           type: "TASK_DONE",
@@ -76,16 +105,31 @@ async function runOne() {
           error: res?.error,
         });
       }
-      console.log("Exec result", res);
-      scheduleNext(4000 + Math.random() * 2000);
+      chrome.runtime.sendMessage({
+        type: "TASK_PROGRESS",
+        processed: processedCount,
+        total: totalCount,
+        current: task,
+        nextWaitMs: waitMs,
+      });
+      scheduleNext(waitMs);
     });
   } catch (e) {
+    const waitMs = 5000;
+    processedCount++;
     chrome.runtime.sendMessage({
       type: "TASK_DONE",
       ok: false,
       task,
       error: String(e),
     });
-    scheduleNext(5000);
+    chrome.runtime.sendMessage({
+      type: "TASK_PROGRESS",
+      processed: processedCount,
+      total: totalCount,
+      current: task,
+      nextWaitMs: waitMs,
+    });
+    scheduleNext(waitMs);
   }
 }
