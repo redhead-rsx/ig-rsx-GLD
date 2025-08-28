@@ -1,135 +1,141 @@
-// Service worker: gerencia fila de tarefas e agenda com alarms
-const QKEY = "silent.queue.v1";
+let queue = [];
 let running = false;
-let processedCount = 0;
-let totalCount = 0;
+let processed = 0;
+let timer = null;
+let currentSettings = {};
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "QUEUE_ADD") {
-    addToQueue(msg.items || []);
-    sendResponse({ ok: true });
-  } else if (msg.type === "RUN_START") {
+  if (msg.type === 'START_PROCESS') {
+    if (running) {
+      sendResponse({ ok: false });
+      return;
+    }
+    queue = msg.items || [];
+    processed = 0;
+    currentSettings = msg.settings || {};
     running = true;
-    processedCount = 0;
-    getQueue().then((q) => {
-      totalCount = q.length;
-      scheduleNext(500);
-    });
+    processNext();
     sendResponse({ ok: true });
     return true;
-  } else if (msg.type === "RUN_STOP") {
-    running = false;
-    chrome.alarms.clear("tick");
-    processedCount = 0;
-    totalCount = 0;
+  } else if (msg.type === 'STOP_PROCESS') {
+    stop();
     sendResponse({ ok: true });
-  } else if (msg.type === "GET_QUEUE") {
-    getQueue().then(q => sendResponse({ ok: true, queue: q }));
-    return true;
   }
 });
 
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
-  chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_PANEL" });
-});
-
-chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === "tick") runOne();
-});
-
-async function getQueue() {
-  return (await chrome.storage.local.get([QKEY]))[QKEY] || [];
-}
-async function setQueue(q) {
-  await chrome.storage.local.set({ [QKEY]: q });
-}
-async function addToQueue(items) {
-  const q = await getQueue();
-  q.push(...items);
-  await setQueue(q);
+function stop() {
+  running = false;
+  queue = [];
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tabId = tabs[0]?.id;
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'STOPPED' });
+  });
 }
 
-function scheduleNext(ms) {
-  chrome.alarms.create("tick", { when: Date.now() + ms });
+function execTask(tabId, task) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: 'EXEC_TASK', task }, (res) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+      } else {
+        resolve(res || { ok: false, error: 'no_response' });
+      }
+    });
+  });
 }
 
-async function runOne() {
+async function processNext() {
   if (!running) return;
-  const q = await getQueue();
-  if (!q.length) return;
-
-  const task = q.shift();
-  await setQueue(q);
-
-  // envia para content script executar no contexto da página
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    const waitMs = 5000;
-    processedCount++;
-    chrome.runtime.sendMessage({
-      type: "TASK_DONE",
-      ok: false,
-      task,
-      error: "no_tab",
-    });
-    chrome.runtime.sendMessage({
-      type: "TASK_PROGRESS",
-      processed: processedCount,
-      total: totalCount,
-      current: task,
-      nextWaitMs: waitMs,
-    });
-    scheduleNext(waitMs);
+  if (!queue.length) {
+    stop();
     return;
   }
-
-  try {
-    chrome.tabs.sendMessage(tab.id, { type: "EXEC_TASK", task }, (res) => {
-      const waitMs = 4000 + Math.random() * 2000;
-      processedCount++;
-      if (chrome.runtime.lastError) {
-        chrome.runtime.sendMessage({
-          type: "TASK_DONE",
-          ok: false,
-          task,
-          error: String(
-            chrome.runtime.lastError.message || chrome.runtime.lastError,
-          ),
-        });
-      } else {
-        chrome.runtime.sendMessage({
-          type: "TASK_DONE",
-          ok: res?.ok,
-          task,
-          error: res?.error,
-        });
-      }
-      chrome.runtime.sendMessage({
-        type: "TASK_PROGRESS",
-        processed: processedCount,
-        total: totalCount,
-        current: task,
-        nextWaitMs: waitMs,
-      });
-      scheduleNext(waitMs);
-    });
-  } catch (e) {
-    const waitMs = 5000;
-    processedCount++;
-    chrome.runtime.sendMessage({
-      type: "TASK_DONE",
-      ok: false,
-      task,
-      error: String(e),
-    });
-    chrome.runtime.sendMessage({
-      type: "TASK_PROGRESS",
-      processed: processedCount,
-      total: totalCount,
-      current: task,
-      nextWaitMs: waitMs,
-    });
-    scheduleNext(waitMs);
+  const item = queue.shift();
+  const tab = await new Promise((r) =>
+    chrome.tabs.query({ active: true, currentWindow: true }, (t) => r(t[0]))
+  );
+  const tabId = tab?.id;
+  if (!tabId) {
+    stop();
+    return;
   }
+  try {
+    if (currentSettings.actionMode === 'follow' || currentSettings.actionMode === 'follow_like') {
+      const res = await execTask(tabId, {
+        kind: 'FOLLOW',
+        userId: item.id,
+        username: item.username,
+      });
+      chrome.tabs.sendMessage(tabId, {
+        type: 'ROW_UPDATE',
+        id: item.id,
+        status: { followed: !!res?.ok, error: res?.ok ? undefined : res?.error },
+      });
+      if (!res?.ok) throw new Error(res.error || 'follow_failed');
+    }
+    if (currentSettings.actionMode === 'follow_like') {
+      const total = currentSettings.likeCount || 0;
+      for (let i = 0; i < total; i++) {
+        const r = await execTask(tabId, {
+          kind: 'LIKE',
+          userId: item.id,
+          username: item.username,
+        });
+        chrome.tabs.sendMessage(tabId, {
+          type: 'ROW_UPDATE',
+          id: item.id,
+          status: {
+            likesTotal: total,
+            likesDone: i + 1,
+            error: r?.ok ? undefined : r?.error,
+          },
+        });
+        if (!r?.ok) throw new Error(r.error || 'like_failed');
+      }
+    }
+    if (currentSettings.actionMode === 'unfollow') {
+      const r = await execTask(tabId, {
+        kind: 'UNFOLLOW',
+        userId: item.id,
+        username: item.username,
+      });
+      chrome.tabs.sendMessage(tabId, {
+        type: 'ROW_UPDATE',
+        id: item.id,
+        status: { unfollowed: !!r?.ok, error: r?.ok ? undefined : r?.error },
+      });
+      if (!r?.ok) throw new Error(r.error || 'unfollow_failed');
+    }
+  } catch (e) {
+    chrome.tabs.sendMessage(tabId, {
+      type: 'ROW_UPDATE',
+      id: item.id,
+      status: { error: String(e.message || e) },
+    });
+  }
+  processed++;
+  const total = processed + queue.length;
+  const delay = nextDelay();
+  chrome.tabs.sendMessage(tabId, {
+    type: 'PROGRESS',
+    done: processed,
+    total,
+    etaMs: delay,
+  });
+  if (queue.length === 0) {
+    timer = setTimeout(stop, delay);
+    return;
+  }
+  timer = setTimeout(processNext, delay);
+}
+
+function nextDelay() {
+  const base = parseInt(currentSettings.delayMs, 10) || 0;
+  const jitterPct = parseInt(currentSettings.randomJitterPct, 10) || 0;
+  const jitter = (base * jitterPct) / 100 * (Math.random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
 }

@@ -1,95 +1,59 @@
-<div id="igx-root">
-  <div id="panel">
-    <div id="tabs">
-      <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
-      <button class="tab-btn" data-tab="settings">Configurações</button>
-    </div>
-
-    <div id="tab-queue" class="tab-content active">
-      <div id="runControls" class="card">
-        <button id="start">Iniciar</button>
-        <button id="stop">Parar</button>
-      </div>
-
-      <div id="followersContainer" class="card">
-        <table id="followersTable">
-          <thead>
-            <tr>
-              <th></th>
-              <th></th>
-              <th>Usuário</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div id="pagination"></div>
-      </div>
-
-      <div id="runLogCard" class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <strong>Log de execução</strong>
-          <button id="clearLog" style="background:#444">Limpar</button>
-        </div>
-        <div id="runLog" style="max-height:180px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;background:#111;padding:6px;border-radius:4px;margin-top:6px;"></div>
-      </div>
-      <div class="row" style="margin:6px 0 10px">
-        <label for="inputCount">Qtde a carregar (0–200):</label>
-        <input id="inputCount" type="number" min="0" max="200" value="200" style="width:90px;margin-left:8px">
-      </div>
-    </div>
-
-    <div id="tab-settings" class="tab-content">
-    <div class="card">
-      <label>Aguardar <input id="cfgActionDelay" type="number" min="0" /> segundos após seguir/deixar de seguir/curtir</label>
-      <label>Aguardar <input id="cfgSkipDelay" type="number" min="0" /> segundos após pular</label>
-      <label>Tempo de espera aleatório de até <input id="cfgRandomPercent" type="range" min="0" max="100" />%</label>
-    </div>
-    <div class="card">
-      <label>Tente novamente <input id="cfgRetrySoft" type="number" min="0" /> minutos após limite suave de taxa</label>
-      <label>Tente novamente <input id="cfgRetryHard" type="number" min="0" /> horas após limite rígido</label>
-      <label>Tente novamente <input id="cfgRetry429" type="number" min="0" /> minutos após limite de taxa 429</label>
-    </div>
-    <div class="card">
-      <label><input id="cfgKeepFollowers" type="checkbox" /> Não deixar de seguir pessoas que me seguem</label>
-      <label><input id="cfgUnfollowOlderThanChk" type="checkbox" /> Deixar de seguir pessoas que comecei a seguir há mais de <input id="cfgUnfollowOlderThan" type="number" min="0" /> dias (mesmo se me seguirem)</label>
-      <label><input id="cfgNotUnfollowYoungerThanChk" type="checkbox" /> Não deixar de seguir pessoas que comecei a seguir há menos de <input id="cfgNotUnfollowYoungerThan" type="number" min="0" /> dias</label>
-    </div>
+<div id="panel">
+  <div id="tabs">
+    <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
+    <button class="tab-btn" data-tab="settings">Configurações</button>
   </div>
-
-    <div id="footer">
+  <div id="tab-queue" class="tab-content active">
+    <div id="topbar" class="card">
+      <button id="btnStart">Iniciar</button>
+      <button id="btnStop" disabled>Parar</button>
       <div class="dropdown">
-        <button id="loadBtn">Carregar Contas</button>
-        <div id="loadMenu" class="dropdown-menu">
-          <button id="loadFollowers">Carregar Seguidores</button>
+        <button id="btnLoad">Carregar Contas</button>
+        <div id="loadMenu" class="menu">
+          <button id="btnLoadFollowers">Carregar Seguidores da Página Atual</button>
         </div>
       </div>
-      <button id="process">Processar Fila</button>
-    </div>
-
-    <div id="actionDialog" class="dialog">
-      <div class="dialog-content">
-        <label><input type="radio" name="actionMode" value="follow" checked /> Seguir</label>
-        <label>
-          <input type="radio" name="actionMode" value="follow-like" /> Seguir + Curtir
-          <input id="dlgLikeCount" type="number" min="1" max="3" value="1" />
-        </label>
-        <label><input type="radio" name="actionMode" value="unfollow" /> Deixar de seguir</label>
-        <div class="dialog-buttons">
-          <button id="dlgCancel">Cancelar</button>
-          <button id="dlgAdd">Iniciar</button>
+      <div class="dropdown">
+        <button id="btnProcess">Processar Fila</button>
+        <div id="processMenu" class="menu">
+          <label><input type="radio" name="actionMode" value="follow" checked> Seguir</label>
+          <label><input type="radio" name="actionMode" value="follow_like"> Seguir + Curtir <input id="likeCount" type="number" min="1" max="12" value="1"></label>
+          <label><input type="radio" name="actionMode" value="unfollow"> Deixar de seguir</label>
+          <div class="dialog-buttons"><button id="btnProcessConfirm">Iniciar</button></div>
         </div>
       </div>
+      <label id="limitLabel">Limite: <input id="limit" type="number" min="0" max="200" value="200" /></label>
     </div>
-
-    <div id="toast"></div>
+    <div id="queueContainer" class="card">
+      <table id="queueTable">
+        <thead><tr><th><input type="checkbox" id="chkAll"></th><th>@username</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="pager">
+        <button id="prevPage">‹</button>
+        <span id="pageInfo"></span>
+        <button id="nextPage">›</button>
+        <select id="pageSize">
+          <option value="10">10</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+          <option value="0">Todos</option>
+        </select>
+      </div>
+    </div>
+    <div id="progressHud" class="hud hidden">
+      <span id="progressText">0/0</span>
+      <span>Próxima em <span id="countdown">00:00</span></span>
+      <button id="btnStopHud">Parar</button>
+    </div>
   </div>
-</div>
-<div id="runHud" style="
-  position: fixed; bottom: 12px; right: 440px; z-index: 2147483647;
-  background:#222; color:#fff; padding:8px 10px; border-radius:8px;
-  box-shadow:0 2px 8px rgba(0,0,0,.5); font-size:13px; line-height:1.3;">
-  <div><strong>Progresso:</strong> <span id="hudProgress">0/0</span></div>
-  <div><strong>Ação:</strong> <span id="hudAction">—</span></div>
-  <div><strong>Próxima em:</strong> <span id="hudCountdown">--:--</span></div>
+  <div id="tab-settings" class="tab-content">
+    <div class="card">
+      <label>Aguardar <input id="cfgDelay" type="number" min="0" /> ms entre ações</label>
+      <label>Aleatório até <input id="cfgJitter" type="number" min="0" max="100" />%</label>
+      <label>Tamanho da página padrão <input id="cfgPageSize" type="number" min="10" max="200" step="10" /></label>
+    </div>
+  </div>
 </div>
