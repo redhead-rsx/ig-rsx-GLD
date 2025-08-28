@@ -5,6 +5,11 @@ let currentUsername = null;
 let followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
 let queueView = null;
 let panelDoc;
+const STATE_KEY = (user) => `silent.followers.${user}`;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export function init(root) {
   panelDoc = root;
@@ -12,7 +17,7 @@ export function init(root) {
   bindDropdown();
   panelDoc
     .getElementById("loadFollowers")
-    .addEventListener("click", loadFollowersHandler);
+    .addEventListener("click", loadFollowersOfCurrentProfile);
   panelDoc.getElementById("process").addEventListener("click", openActionDialog);
   panelDoc.getElementById("dlgCancel").addEventListener("click", closeActionDialog);
   panelDoc.getElementById("dlgAdd").addEventListener("click", confirmActionDialog);
@@ -82,14 +87,19 @@ export function extractUsernameFromUrl(url) {
 
 function execTask(task) {
   return new Promise((resolve) => {
-    window.postMessage({ __BOT__: true, type: "TASK", task }, "*");
-    const onMsg = (ev) => {
-      if (ev.data?.__BOT__ && ev.data.type === "TASK_RESULT") {
-        window.removeEventListener("message", onMsg);
-        resolve(ev.data.payload);
+    chrome.runtime.sendMessage({ type: "EXEC_IN_ACTIVE_TAB", task }, (res) => {
+      if (!chrome.runtime.lastError && res !== undefined) {
+        resolve(res);
+      } else {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          const tabId = tabs[0]?.id;
+          if (!tabId) return resolve(undefined);
+          chrome.tabs.sendMessage(tabId, { type: "EXEC_TASK", task }, (r) =>
+            resolve(r)
+          );
+        });
       }
-    };
-    window.addEventListener("message", onMsg);
+    });
   });
 }
 
@@ -126,7 +136,7 @@ function stopRun() {
 
 async function loadState() {
   if (!currentUsername) return;
-  const key = `silent.followers.${currentUsername}`;
+  const key = STATE_KEY(currentUsername);
   const saved = await getLocal(key);
   if (saved) {
     followers = saved.users || [];
@@ -139,7 +149,7 @@ async function loadState() {
 
 async function saveState() {
   if (!currentUsername) return;
-  const key = `silent.followers.${currentUsername}`;
+  const key = STATE_KEY(currentUsername);
   await setLocal(key, {
     users: followers,
     cursor: followersState.cursor,
@@ -162,96 +172,108 @@ async function restoreState() {
 }
 
 async function lookupUserId(username) {
-  const max = 2;
-  let lastErr;
-  for (let i = 0; i < max; i++) {
+  let lastErr = "unknown";
+  for (let i = 0; i < 3; i++) {
     const res = await execTask({ kind: "LOOKUP", username }).catch((e) => ({
       ok: false,
       error: String(e),
     }));
-    if (res?.ok && res.out?.userId) return res.out.userId;
-    lastErr = res?.error || "unknown";
-    await new Promise((r) => setTimeout(r, 300 * (i + 1)));
+    if (res?.ok && (res.out?.userId || res.out?.id)) {
+      return res.out.userId || res.out.id;
+    }
+    lastErr = res?.error || "no_response";
+    await sleep(300 * (i + 1));
   }
   throw new Error("lookup_failed:" + lastErr);
 }
 
-async function loadFollowersHandler() {
+async function loadFollowersOfCurrentProfile() {
   const username = extractUsernameFromUrl(location.href);
   if (!username) {
     alert("Abra um perfil do Instagram para carregar seguidores.");
     return;
   }
-  currentUsername = username;
-  const key = `silent.followers.${username}`;
-  const saved = await getLocal(key);
-  followersState = { cursor: null, totalLoaded: 0, lastIndex: 0 };
+
+  const saved = (await chrome.storage.local.get(STATE_KEY(username)))[
+    STATE_KEY(username)
+  ];
   let startIndex = 0;
-  followers = [];
-  if (saved && saved.users && saved.users.length) {
-    const resume = confirm("Você gostaria de tentar continuar de onde parou?");
-    if (resume) {
-      followers = saved.users;
-      followersState.cursor = saved.cursor;
-      followersState.totalLoaded = saved.totalLoaded || saved.users.length;
-      followersState.lastIndex = saved.lastIndex || followersState.totalLoaded;
-      startIndex = followersState.lastIndex;
+  let resume = false;
+  if (saved?.users?.length) {
+    if (confirm("Você gostaria de tentar continuar de onde parou?")) {
+      resume = true;
     } else {
-      startIndex =
-        parseInt(
-          prompt(
-            "Digite o número do seguidor para começar (0 = mais recente).",
-            "0",
-          ) || "0",
-          10,
-        ) || 0;
+      const v = prompt(
+        "Digite o número do seguidor para começar (0 = mais recente).",
+        "0"
+      );
+      startIndex = Math.max(0, parseInt(v || "0", 10) || 0);
     }
   } else {
-    startIndex =
-      parseInt(
-        prompt(
-          "Digite o número do seguidor para começar (0 = mais recente).",
-          "0",
-        ) || "0",
-        10,
-      ) || 0;
+    const v = prompt(
+      "Digite o número do seguidor para começar (0 = mais recente).",
+      "0"
+    );
+    startIndex = Math.max(0, parseInt(v || "0", 10) || 0);
   }
+
   let userId;
   try {
     userId = await lookupUserId(username);
-  } catch (err) {
-    alert("Não foi possível resolver o usuário. Detalhes: " + err.message);
+  } catch (e) {
+    alert("Não foi possível resolver o usuário.\nDetalhes: " + e.message);
     return;
   }
-  let cursor = followersState.cursor;
-  let totalLoaded = followersState.totalLoaded;
-  while (followers.length < 200) {
-    let res;
-    try {
-      res = await execTask({
-        kind: "LIST_FOLLOWERS",
-        userId,
-        limit: 24,
-        cursor,
-      });
-    } catch (e) {}
-    if (!res || !res.users) break;
-    for (const u of res.users) {
-      if (totalLoaded < startIndex) {
-        totalLoaded++;
-        continue;
-      }
-      if (followers.length >= 200) break;
-      followers.push({ id: u.id, username: u.username, status: {} });
-      totalLoaded++;
+
+  const MAX = 200;
+  let collected = resume ? saved.users || [] : [];
+  let cursor = resume ? saved.cursor || null : null;
+
+  while (collected.length < MAX) {
+    const res = await execTask({
+      kind: "LIST_FOLLOWERS",
+      userId,
+      limit: 24,
+      cursor,
+    }).catch((e) => ({ ok: false, error: String(e) }));
+
+    if (!res?.ok || !res.out) {
+      alert("Falha ao listar seguidores: " + (res?.error || "desconhecido"));
+      break;
     }
-    cursor = res.nextCursor;
-    if (!cursor) break;
+
+    const batch = res.out.users || [];
+    collected = collected.concat(batch);
+    cursor = res.out.nextCursor || null;
+    if (!cursor || batch.length === 0) break;
+    await sleep(200);
   }
-  followersState.cursor = cursor;
-  followersState.totalLoaded = totalLoaded;
-  followersState.lastIndex = totalLoaded;
-  await saveState();
+
+  if (startIndex > 0 && collected.length > startIndex) {
+    collected = collected.slice(startIndex);
+  }
+
+  const state = {
+    users: collected
+      .slice(0, MAX)
+      .map((u) => ({ id: u.id, username: u.username, status: {} })),
+    cursor,
+    totalLoaded: collected.length,
+    lastIndex: resume ? saved.lastIndex || 0 : startIndex,
+  };
+
+  await chrome.storage.local.set({ [STATE_KEY(username)]: state });
+
+  currentUsername = username;
+  followersState.cursor = state.cursor;
+  followersState.totalLoaded = state.totalLoaded;
+  followersState.lastIndex = state.lastIndex;
+  renderFollowersTable(username, state.users);
+}
+
+function renderFollowersTable(username, users) {
+  currentUsername = username;
+  followers = users || [];
   currentPage = 1;
   renderFollowers();
 }
