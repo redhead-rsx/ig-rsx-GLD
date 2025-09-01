@@ -36,7 +36,7 @@ function stop() {
   });
 }
 
-function execTask(tabId, task) {
+function execCommand(tabId, action, payload) {
   return new Promise((resolve) => {
     let done = false;
     const timer = setTimeout(() => {
@@ -45,16 +45,20 @@ function execTask(tabId, task) {
         resolve({ ok: false, error: 'no_response' });
       }
     }, 10000);
-    chrome.tabs.sendMessage(tabId, { type: 'EXEC_TASK', task }, (res) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message });
-      } else {
-        resolve(res || { ok: false, error: 'no_response' });
-      }
-    });
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: 'EXEC', action, payload },
+      (res) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(res || { ok: false, error: 'no_response' });
+        }
+      },
+    );
   });
 }
 
@@ -75,8 +79,7 @@ async function processNext() {
   }
   try {
     if (currentSettings.actionMode === 'follow' || currentSettings.actionMode === 'follow_like') {
-      const res = await execTask(tabId, {
-        kind: 'FOLLOW',
+      const res = await execCommand(tabId, 'FOLLOW', {
         userId: item.id,
         username: item.username,
       });
@@ -90,8 +93,7 @@ async function processNext() {
     if (currentSettings.actionMode === 'follow_like') {
       const total = currentSettings.likeCount || 0;
       for (let i = 0; i < total; i++) {
-        const r = await execTask(tabId, {
-          kind: 'LIKE',
+        const r = await execCommand(tabId, 'LIKE', {
           userId: item.id,
           username: item.username,
         });
@@ -108,8 +110,7 @@ async function processNext() {
       }
     }
     if (currentSettings.actionMode === 'unfollow') {
-      const r = await execTask(tabId, {
-        kind: 'UNFOLLOW',
+      const r = await execCommand(tabId, 'UNFOLLOW', {
         userId: item.id,
         username: item.username,
       });

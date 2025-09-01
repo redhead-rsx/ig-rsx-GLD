@@ -11,10 +11,8 @@
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "OPEN_PANEL") {
     openPanel();
-  } else if (msg.type === "EXEC_TASK") {
-    execTask(msg.task).then((payload) => {
-      sendResponse(payload);
-    });
+  } else if (msg.type === "EXEC") {
+    dispatchExec(msg.action, msg.payload).then((res) => sendResponse(res));
     return true;
   } else if (
     ["ROW_UPDATE", "PROGRESS", "STOPPED", "FOLLOWERS_LOADED"].includes(msg.type)
@@ -72,6 +70,25 @@ function execTask(task) {
   });
 }
 
+async function dispatchExec(action, payload = {}) {
+  switch (action) {
+    case "FOLLOW":
+      return execTask({ kind: "FOLLOW", ...payload });
+    case "LIKE":
+      return execTask({ kind: "LIKE", ...payload });
+    case "UNFOLLOW":
+      return execTask({ kind: "UNFOLLOW", ...payload });
+    case "LOOKUP":
+      return execTask({ kind: "LOOKUP", ...payload });
+    case "LIST_FOLLOWERS":
+      return execTask({ kind: "LIST_FOLLOWERS", ...payload });
+    case "LIST_FOLLOWING":
+      return execTask({ kind: "LIST_FOLLOWING", ...payload });
+    default:
+      return { ok: false, error: "unknown_action" };
+  }
+}
+
 async function loadUsers(limit, mode) {
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
@@ -81,7 +98,7 @@ async function loadUsers(limit, mode) {
     console.error("[collect] lookup failed", e);
     return null;
   });
-  const userId = lookup?.out?.userId || lookup?.out?.id;
+  const userId = lookup?.data?.userId || lookup?.data?.id;
   if (!userId) return { items: [], total: 0, error: "user_not_found" };
   const seen = new Set();
   let items = [];
@@ -96,7 +113,7 @@ async function loadUsers(limit, mode) {
       console.error("[collect] page failed", e);
       return null;
     });
-    const batch = res?.out?.users || [];
+    const batch = res?.data?.users || [];
     if (!batch.length) break;
     for (const u of batch) {
       if (!seen.has(u.id)) {
@@ -110,7 +127,7 @@ async function loadUsers(limit, mode) {
       { type: "PROGRESS", done: items.length, total: limit },
       "*",
     );
-    cursor = res?.out?.nextCursor || res?.out?.cursor;
+    cursor = res?.data?.nextCursor || res?.data?.cursor;
     if (!cursor) break;
   }
   items = items.slice(0, limit);
