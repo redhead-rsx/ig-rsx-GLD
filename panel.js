@@ -7,12 +7,17 @@ const DEFAULT_CFG = {
   includeAlreadyFollowing: false,
 };
 let cfg = { ...DEFAULT_CFG };
-let followers = [];
-let page = 1;
-let pageSize = DEFAULT_CFG.pageSize;
+const state = {
+  data: [],
+  processed: 0,
+  total: 0,
+  phase: 'idle',
+  nextActionAt: null,
+  page: 1,
+  pageSize: DEFAULT_CFG.pageSize,
+};
 let running = false;
-let ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
-let ovTimer = null;
+let etaTimer = null;
 
 function send(msg) {
   window.postMessage({ from: 'ig-panel', ...msg }, '*');
@@ -22,56 +27,61 @@ function qs(sel) {
   return document.querySelector(sel);
 }
 
-if (window.__IG_PANEL_MSG_HANDLER) {
-  window.removeEventListener('message', window.__IG_PANEL_MSG_HANDLER);
+if (window.__RSX_PANEL_MSG_HANDLER) {
+  window.removeEventListener('message', window.__RSX_PANEL_MSG_HANDLER);
 }
-window.__IG_PANEL_MSG_HANDLER = (ev) => {
+window.__RSX_PANEL_MSG_HANDLER = (ev) => {
   const msg = ev.data || {};
   if (msg.type === 'PANEL_READY') {
     init();
-  } else if (msg.type === 'FOLLOWERS_LOADED') {
+    return;
+  }
+  if (!msg.__RSX__ || !msg.type) return;
+  if (msg.type === 'FOLLOWERS_LOADED') {
     if (msg.error) {
       alert(msg.error);
       return;
     }
-    followers = msg.items || [];
-    page = 1;
-    renderTable();
+    const seen = new Set(state.data.map((i) => i.id || i.username));
+    for (const it of msg.items || []) {
+      const key = it.id || it.username;
+      if (!seen.has(key)) {
+        state.data.push(it);
+        seen.add(key);
+      }
+    }
+    state.page = 1;
+    renderPage();
     updatePager();
   } else if (msg.type === 'ROW_UPDATE') {
-    const row = followers.find((f) => f.id === msg.id);
-    if (row) {
-      row.status = { ...(row.status || {}), ...msg.status };
-      updateRow(msg.id);
+    const idx =
+      msg.index !== undefined
+        ? msg.index
+        : state.data.findIndex(
+            (f) => f.id === msg.id || f.username === msg.username,
+          );
+    if (idx >= 0) {
+      state.data[idx].status = normalizeStatus(msg.status);
+      updateRowIfVisible(idx);
     }
   } else if (msg.type === 'QUEUE_TICK') {
-    ov.processed = msg.processed || 0;
-    ov.total = msg.total || 0;
-    ov.phase = msg.phase || 'idle';
-    ov.nextActionAt = msg.nextActionAt || null;
-    qs('#rsx-prog').textContent = `${ov.processed} / ${ov.total}`;
-    qs('#rsx-phase').textContent = ov.phase;
-    tickOverlay();
-    if (!ovTimer && ov.phase !== 'done' && ov.phase !== 'paused') {
-      ovTimer = setInterval(tickOverlay, 200);
-    }
-    if (ov.phase === 'done' || ov.phase === 'paused') {
-      running = false;
-      clearInterval(ovTimer);
-      ovTimer = null;
-      ov.nextActionAt = null;
-      tickOverlay();
-      updateRunButtons();
-    }
+    state.processed = msg.processed || 0;
+    state.total = msg.total || 0;
+    state.phase = msg.phase || 'idle';
+    state.nextActionAt = msg.nextActionAt || null;
+    updateOverlay();
   } else if (msg.type === 'QUEUE_DONE') {
+    state.phase = 'done';
+    state.nextActionAt = null;
+    updateOverlay();
     running = false;
     updateRunButtons();
   }
 };
-window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
+window.addEventListener('message', window.__RSX_PANEL_MSG_HANDLER);
 window.__IG_PANEL_CLEANUP = () => {
-  window.removeEventListener('message', window.__IG_PANEL_MSG_HANDLER);
-  window.__IG_PANEL_MSG_HANDLER = null;
+  window.removeEventListener('message', window.__RSX_PANEL_MSG_HANDLER);
+  window.__RSX_PANEL_MSG_HANDLER = null;
 };
 
 function init() {
@@ -105,40 +115,28 @@ function init() {
   qs('#btnStart').addEventListener('click', startProcessing);
   qs('#btnStop').addEventListener('click', stopProcessing);
   qs('#pageSize').addEventListener('change', () => {
-    pageSize = parseInt(qs('#pageSize').value, 10);
-    cfg.pageSize = pageSize;
+    state.pageSize = parseInt(qs('#pageSize').value, 10);
+    cfg.pageSize = state.pageSize;
     saveCfg();
-    renderTable();
+    renderPage();
     updatePager();
   });
   qs('#cfgPageSize').addEventListener('change', () => {
-    cfg.pageSize = parseInt(qs('#cfgPageSize').value, 10) || DEFAULT_CFG.pageSize;
-    pageSize = cfg.pageSize;
+    cfg.pageSize =
+      parseInt(qs('#cfgPageSize').value, 10) || DEFAULT_CFG.pageSize;
+    state.pageSize = cfg.pageSize;
     saveCfg();
-    qs('#pageSize').value = String(pageSize);
-    renderTable();
+    qs('#pageSize').value = String(state.pageSize);
+    renderPage();
     updatePager();
   });
   qs('#likeCount').addEventListener('input', handleLikeInput);
   qs('#cfgSave').addEventListener('click', saveCfgFromInputs);
-  qs('#prevPage').addEventListener('click', () => {
-    if (page > 1) {
-      page--;
-      renderTable();
-      updatePager();
-    }
-  });
-  qs('#nextPage').addEventListener('click', () => {
-    const totalPages = getTotalPages();
-    if (page < totalPages) {
-      page++;
-      renderTable();
-      updatePager();
-    }
-  });
+  qs('#prevPage').addEventListener('click', gotoPrev);
+  qs('#nextPage').addEventListener('click', gotoNext);
   qs('#chkAll').addEventListener('change', (e) => {
-    followers.forEach((f) => (f.checked = e.target.checked));
-    renderTable();
+    state.data.forEach((f) => (f.checked = e.target.checked));
+    renderPage();
   });
   loadCfg();
   updateRunButtons();
@@ -161,10 +159,10 @@ function toggleMenu(sel) {
 }
 
 function startProcessing() {
-  if (!followers.length || running) return;
-  const selected = followers.filter((f) => f.checked);
-  const list = (selected.length ? selected : followers).filter(
-    (f) => !(f.status && f.status.skip_reason)
+  if (!state.data.length || running) return;
+  const selected = state.data.filter((f) => f.checked);
+  const list = (selected.length ? selected : state.data).filter(
+    (f) => !(f.status && f.status.skip_reason),
   );
   const targets = list.map((u) => ({ id: u.id, username: u.username }));
   const mode = document.querySelector('input[name="actionMode"]:checked').value;
@@ -189,78 +187,133 @@ function updateRunButtons() {
 }
 
 function getTotalPages() {
-  if (pageSize === 0) return 1;
-  return Math.max(1, Math.ceil(followers.length / pageSize));
+  if (state.pageSize === 0) return 1;
+  return Math.max(1, Math.ceil(state.data.length / state.pageSize));
 }
 
-function renderTable() {
+function itemIsOnCurrentPage(idx) {
+  const start = (state.page - 1) * state.pageSize;
+  const end = state.pageSize === 0 ? state.data.length : start + state.pageSize;
+  return idx >= start && idx < end;
+}
+
+function renderRow(item, idxGlobal) {
+  const tr = document.createElement('tr');
+  tr.dataset.idx = String(idxGlobal);
+  const tdChk = document.createElement('td');
+  const chk = document.createElement('input');
+  chk.type = 'checkbox';
+  chk.checked = !!item.checked;
+  chk.addEventListener('change', () => {
+    item.checked = chk.checked;
+  });
+  tdChk.appendChild(chk);
+  const tdUser = document.createElement('td');
+  tdUser.textContent = '@' + item.username;
+  const tdStatus = document.createElement('td');
+  tdStatus.className = 'status';
+  tdStatus.innerHTML = renderStatus(item.status);
+  tr.appendChild(tdChk);
+  tr.appendChild(tdUser);
+  tr.appendChild(tdStatus);
+  return tr;
+}
+
+function renderPage() {
   const body = qs('#queueTable tbody');
   body.innerHTML = '';
-  let list = followers;
-  if (pageSize !== 0) {
-    const start = (page - 1) * pageSize;
-    list = followers.slice(start, start + pageSize);
-  }
-  for (const f of list) {
-    const tr = document.createElement('tr');
-    tr.dataset.id = String(f.id);
-    const tdChk = document.createElement('td');
-    const chk = document.createElement('input');
-    chk.type = 'checkbox';
-    chk.checked = !!f.checked;
-    chk.addEventListener('change', () => {
-      f.checked = chk.checked;
-    });
-    tdChk.appendChild(chk);
-    const tdUser = document.createElement('td');
-    tdUser.textContent = '@' + f.username;
-    const tdStatus = document.createElement('td');
-    tdStatus.className = 'status';
-    tdStatus.innerHTML = renderStatus(f.status);
-    tr.appendChild(tdChk);
-    tr.appendChild(tdUser);
-    tr.appendChild(tdStatus);
-    body.appendChild(tr);
-  }
+  const start = (state.page - 1) * state.pageSize;
+  const end =
+    state.pageSize === 0 ? state.data.length : start + state.pageSize;
+  const list = state.data.slice(start, end);
+  list.forEach((item, i) => {
+    body.appendChild(renderRow(item, start + i));
+  });
 }
 
-function updateRow(id) {
-  const rowEl = qs(`#queueTable tbody tr[data-id="${id}"]`);
-  if (rowEl) {
-    const st = followers.find((f) => f.id === id)?.status;
-    const tdStatus = rowEl.querySelector('td.status');
-    if (tdStatus) tdStatus.innerHTML = renderStatus(st);
-  }
+function updateRowIfVisible(idx) {
+  if (!itemIsOnCurrentPage(idx)) return;
+  const tbody = qs('#queueTable tbody');
+  const tr = tbody.querySelector(`tr[data-idx="${idx}"]`);
+  if (tr) tr.replaceWith(renderRow(state.data[idx], idx));
 }
 
 function renderStatus(st) {
   if (!st) return '';
-  if (st.error) return `<span class="badge error">${st.error}</span>`;
-  if (st.likesTotal)
-    return `<span class="badge wait">Likes: ${st.likesDone || 0}/${st.likesTotal}</span>`;
-  if (st.result === 'already_following' || st.skip_reason === 'already_following')
-    return '<span class="badge wait">Já seguia</span>';
-  if (st.result === 'followed' || st.followed || st.unfollowed)
-    return '<span class="badge success">Seguido</span>';
-  return '';
+  const span = document.createElement('span');
+  span.className = `badge ${st.kind || ''}`;
+  span.textContent = st.text || '';
+  return span.outerHTML;
 }
 
 function updatePager() {
-  qs('#pageInfo').textContent = `${page}/${getTotalPages()}`;
-  qs('#pageSize').value = String(pageSize);
+  qs('#pageInfo').textContent = `${state.page}/${getTotalPages()}`;
+  qs('#pageSize').value = String(state.pageSize);
 }
 
-function tickOverlay() {
-  const etaEl = qs('#rsx-eta');
-  if (!ov.nextActionAt) {
-    etaEl.textContent = '--:--.-';
-    return;
+function startEta() {
+  if (etaTimer) return;
+  etaTimer = setInterval(() => {
+    const etaEl = qs('#rsx-eta');
+    if (!state.nextActionAt) {
+      etaEl.textContent = '--:--.-';
+      return;
+    }
+    const rem = Math.max(0, state.nextActionAt - Date.now());
+    const m = Math.floor(rem / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
+    const d = Math.floor((rem % 1000) / 100);
+    etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+  }, 200);
+}
+
+function stopEta() {
+  clearInterval(etaTimer);
+  etaTimer = null;
+  qs('#rsx-eta').textContent = '--:--.-';
+}
+
+function updateOverlay() {
+  qs('#rsx-prog').textContent = `${state.processed} / ${state.total}`;
+  qs('#rsx-phase').textContent = state.phase;
+  if (state.phase === 'done' || !state.nextActionAt) {
+    stopEta();
+  } else {
+    startEta();
   }
-  const rem = Math.max(0, ov.nextActionAt - Date.now());
-  const m = Math.floor(rem / 60000);
-  const s = Math.floor((rem % 60000) / 1000);
-  const d = Math.floor((rem % 1000) / 100);
-  etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+}
+
+function gotoNext() {
+  const totalPages = getTotalPages();
+  if (state.page < totalPages) {
+    state.page++;
+    renderPage();
+    updatePager();
+  }
+}
+
+function gotoPrev() {
+  if (state.page > 1) {
+    state.page--;
+    renderPage();
+    updatePager();
+  }
+}
+
+function normalizeStatus(st) {
+  if (!st) return null;
+  if (st.text) return st;
+  if (st.error) return { text: st.error, kind: 'err' };
+  if (st.likesTotal)
+    return {
+      text: `Likes: ${st.likesDone || 0}/${st.likesTotal}`,
+      kind: 'ok',
+    };
+  if (st.result === 'already_following' || st.skip_reason === 'already_following')
+    return { text: 'Já seguia', kind: 'skip' };
+  if (st.result === 'followed' || st.followed || st.unfollowed)
+    return { text: 'Seguido', kind: 'ok' };
+  return st;
 }
 function handleLikeInput() {
   const v = parseInt(qs('#likeCount').value, 10) || 0;
@@ -299,8 +352,8 @@ function saveCfgFromInputs() {
   qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
   qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
   qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
-  pageSize = cfg.pageSize;
-  renderTable();
+  state.pageSize = cfg.pageSize;
+  renderPage();
   updatePager();
   handleLikeInput();
 }
@@ -318,10 +371,10 @@ function loadCfg() {
     qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
     qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
     qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
-    pageSize = cfg.pageSize;
-    qs('#pageSize').value = String(pageSize);
+    state.pageSize = cfg.pageSize;
+    qs('#pageSize').value = String(state.pageSize);
     handleLikeInput();
-    renderTable();
+    renderPage();
     updatePager();
   });
 }
