@@ -4,6 +4,10 @@ let processed = 0;
 let timer = null;
 let currentSettings = {};
 
+function log(...args) {
+  console.debug('[bg]', ...args);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_PROCESS') {
     if (running) {
@@ -14,6 +18,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     processed = 0;
     currentSettings = msg.settings || {};
     running = true;
+    log('start', queue.length);
     processNext();
     sendResponse({ ok: true });
     return true;
@@ -30,6 +35,7 @@ function stop() {
     clearTimeout(timer);
     timer = null;
   }
+  log('stop');
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tabId = tabs[0]?.id;
     if (tabId) chrome.tabs.sendMessage(tabId, { type: 'STOPPED' });
@@ -45,6 +51,7 @@ function execCommand(tabId, action, payload) {
         resolve({ ok: false, error: 'no_response' });
       }
     }, 10000);
+    log('exec', action, payload);
     chrome.tabs.sendMessage(
       tabId,
       { type: 'EXEC', action, payload },

@@ -2,17 +2,36 @@ import { IGRunner } from "./runner.js";
 
 const runner = new IGRunner();
 
+function log(...args) {
+  console.debug('[page]', ...args);
+}
+
 window.addEventListener("message", async (ev) => {
-  if (!ev.data?.__BOT__) return;
-  if (ev.data.type === "TASK") {
-    try {
-      const data = await runner.execute(ev.data.task);
-      window.postMessage(
-        { __BOT__: true, type: "TASK_RESULT", payload: { ok: true, data } },
-        "*",
-      );
-    } catch (e) {
-      window.postMessage({ __BOT__: true, type: "TASK_RESULT", payload: { ok: false, error: String(e) } }, "*");
-    }
+  const msg = ev.data;
+  if (!msg?.__BOT__ || msg.type !== "TASK") return;
+  try {
+    log('task', msg.action);
+    const data = await runner.execute({ kind: msg.action, ...(msg.payload || {}) });
+    window.postMessage(
+      {
+        __BOT__: true,
+        type: "TASK_RESULT",
+        requestId: msg.requestId,
+        ok: true,
+        data,
+      },
+      "*",
+    );
+  } catch (e) {
+    window.postMessage(
+      {
+        __BOT__: true,
+        type: "TASK_RESULT",
+        requestId: msg.requestId,
+        ok: false,
+        error: String(e),
+      },
+      "*",
+    );
   }
 });
