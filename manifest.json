@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "manifest_version": 3,
   "permissions": ["storage", "scripting", "alarms", "tabs"],
-  "host_permissions": ["https://www.instagram.com/*"],
+  "host_permissions": ["https://*.instagram.com/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -13,9 +13,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.instagram.com/*"],
+      "matches": ["https://*.instagram.com/*"],
       "js": ["contentscript.js"],
-      "run_at": "document_start"
+      "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [
@@ -28,7 +28,7 @@
         "panel.js",
         "panel.css"
       ],
-      "matches": ["https://www.instagram.com/*"]
+      "matches": ["https://*.instagram.com/*"]
     }
   ]
 }
