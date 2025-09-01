@@ -10,46 +10,61 @@ function log(...args) {
     s.type = "module";
     (document.head || document.documentElement).appendChild(s);
   }
-  log('injected helpers');
-})();
+    log('injected helpers');
+  })();
 
-const pending = {};
+const _pending = {};
+
+chrome.runtime.sendMessage({ type: 'PING_SW' }, (resp) => {
+  if (chrome.runtime.lastError) {
+    console.warn('[cs] ping sw erro:', chrome.runtime.lastError.message);
+  } else {
+    console.log('[cs] ping sw ok:', resp);
+  }
+});
 
 if (window.__IG_CS_TASK_HANDLER) {
   window.removeEventListener('message', window.__IG_CS_TASK_HANDLER);
 }
-window.__IG_CS_TASK_HANDLER = (ev) => {
-  const data = ev.data;
-  if (data?.__BOT__ && data.type === 'TASK_RESULT' && pending[data.requestId]) {
-    pending[data.requestId](data);
-    delete pending[data.requestId];
-  }
-};
-window.addEventListener('message', window.__IG_CS_TASK_HANDLER);
+  window.__IG_CS_TASK_HANDLER = (ev) => {
+    const d = ev.data;
+    if (!d || d.__BOT__ || !d.type) return;
+    if (d.type === 'TASK_RESULT' && d.requestId && _pending[d.requestId]) {
+      try {
+        _pending[d.requestId](d);
+      } finally {
+        delete _pending[d.requestId];
+      }
+    }
+  };
+  window.addEventListener('message', window.__IG_CS_TASK_HANDLER);
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'OPEN_PANEL') {
-    openPanel();
-  } else if (msg.type === 'EXEC_TASK') {
-    const id = Date.now() + '_' + Math.random();
-    pending[id] = (res) => sendResponse({ ok: res.ok, data: res.data, error: res.error });
-    window.postMessage(
-      {
-        __BOT__: true,
-        type: 'TASK',
-        requestId: id,
-        action: msg.action,
-        payload: msg.payload,
-      },
-      '*',
-    );
-    return true;
-  } else if (
-    ['ROW_UPDATE', 'PROGRESS', 'STOPPED', 'FOLLOWERS_LOADED'].includes(msg.type)
-  ) {
-    window.postMessage(msg, '*');
-  }
-});
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === 'PING_CS') {
+      return sendResponse({ ok: true, from: 'cs' });
+    }
+    if (msg.type === 'OPEN_PANEL') {
+      openPanel();
+    } else if (msg.type === 'EXEC_TASK') {
+      const id = Date.now() + '_' + Math.random().toString(36).slice(2);
+      _pending[id] = sendResponse;
+      window.postMessage(
+        {
+          __BOT__: true,
+          type: 'TASK',
+          requestId: id,
+          action: msg.action,
+          payload: msg.payload,
+        },
+        '*',
+      );
+      return true;
+    } else if (
+      ['ROW_UPDATE', 'PROGRESS', 'STOPPED', 'FOLLOWERS_LOADED'].includes(msg.type)
+    ) {
+      window.postMessage(msg, '*');
+    }
+  });
 
 async function openPanel() {
   const old = document.getElementById("ig-panel-root");
@@ -90,10 +105,10 @@ function execTask(action, payload = {}) {
   return new Promise((resolve) => {
     const id = Date.now() + '_' + Math.random();
     const timeout = setTimeout(() => {
-      delete pending[id];
+      delete _pending[id];
       resolve({ ok: false, error: 'no_response' });
     }, 10000);
-    pending[id] = (res) => {
+    _pending[id] = (res) => {
       clearTimeout(timeout);
       resolve({ ok: res.ok, data: res.data, error: res.error });
     };

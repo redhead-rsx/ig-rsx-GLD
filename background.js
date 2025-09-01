@@ -9,7 +9,9 @@ function log(...args) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'START_PROCESS') {
+  if (msg?.type === 'PING_SW') {
+    sendResponse({ ok: true, from: 'sw' });
+  } else if (msg.type === 'START_PROCESS') {
     if (running) {
       sendResponse({ ok: false });
       return;
@@ -42,31 +44,34 @@ function stop() {
   });
 }
 
-function execCommand(tabId, action, payload) {
+function sendToTab(tabId, message, timeoutMs = 5000) {
   return new Promise((resolve) => {
-    let finished = false;
-    const handleResult = (res) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      resolve(res);
-    };
-    const timer = setTimeout(() => {
-      handleResult({ ok: false, error: 'timeout' });
-    }, 5000);
-    log('exec', action, payload);
-    chrome.tabs.sendMessage(
-      tabId,
-      { type: 'EXEC_TASK', action, payload },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          handleResult({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          handleResult(response || { ok: false, error: 'no_response' });
-        }
-      },
-    );
+    let done = false;
+    const t = setTimeout(() => {
+      if (!done) {
+        done = true;
+        resolve({ ok: false, error: 'timeout' });
+      }
+    }, timeoutMs);
+    chrome.tabs.sendMessage(tabId, message, (resp) => {
+      if (done) return;
+      clearTimeout(t);
+      if (chrome.runtime.lastError) {
+        return resolve({ ok: false, error: chrome.runtime.lastError.message });
+      }
+      resolve(resp || { ok: false, error: 'no_response' });
+    });
   });
+}
+
+async function execCommand(tabId, action, payload) {
+  const ping = await sendToTab(tabId, { type: 'PING_CS' });
+  if (!ping?.ok) {
+    log('ping failed', ping?.error);
+    return { ok: false, error: ping?.error || 'ping_failed' };
+  }
+  log('exec', action, payload);
+  return sendToTab(tabId, { type: 'EXEC_TASK', action, payload });
 }
 
 async function processNext() {
