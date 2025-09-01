@@ -37,6 +37,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     followers = msg.items || [];
     page = 1;
     renderTable();
+    window.__rsxApplyPendingV2?.();
     updatePager();
   } else if (msg.type === 'ROW_UPDATE') {
     const row = followers.find((f) => f.id === msg.id);
@@ -109,6 +110,7 @@ function init() {
     cfg.pageSize = pageSize;
     saveCfg();
     renderTable();
+    window.__rsxApplyPendingV2?.();
     updatePager();
   });
   qs('#cfgPageSize').addEventListener('change', () => {
@@ -117,6 +119,7 @@ function init() {
     saveCfg();
     qs('#pageSize').value = String(pageSize);
     renderTable();
+    window.__rsxApplyPendingV2?.();
     updatePager();
   });
   qs('#likeCount').addEventListener('input', handleLikeInput);
@@ -125,6 +128,7 @@ function init() {
     if (page > 1) {
       page--;
       renderTable();
+      window.__rsxApplyPendingV2?.();
       updatePager();
     }
   });
@@ -133,12 +137,14 @@ function init() {
     if (page < totalPages) {
       page++;
       renderTable();
+      window.__rsxApplyPendingV2?.();
       updatePager();
     }
   });
   qs('#chkAll').addEventListener('change', (e) => {
     followers.forEach((f) => (f.checked = e.target.checked));
     renderTable();
+    window.__rsxApplyPendingV2?.();
   });
   loadCfg();
   updateRunButtons();
@@ -204,6 +210,7 @@ function renderTable() {
   for (const f of list) {
     const tr = document.createElement('tr');
     tr.dataset.id = String(f.id);
+    tr.dataset.username = '@' + f.username;
     const tdChk = document.createElement('td');
     const chk = document.createElement('input');
     chk.type = 'checkbox';
@@ -301,6 +308,7 @@ function saveCfgFromInputs() {
   qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
   pageSize = cfg.pageSize;
   renderTable();
+  window.__rsxApplyPendingV2?.();
   updatePager();
   handleLikeInput();
 }
@@ -319,14 +327,109 @@ function loadCfg() {
     qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
     qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
     pageSize = cfg.pageSize;
-    qs('#pageSize').value = String(pageSize);
-    handleLikeInput();
-    renderTable();
-    updatePager();
-  });
-}
+      qs('#pageSize').value = String(pageSize);
+      handleLikeInput();
+      renderTable();
+      window.__rsxApplyPendingV2?.();
+      updatePager();
+    });
+  }
 
 function saveCfg() {
   chrome.storage.local.set(cfg);
   chrome.runtime.sendMessage({ type: 'CFG_UPDATED', cfg });
 }
+
+(function ensureV2Listener() {
+  if (window.__rsxV2Bound) return;
+  window.__rsxV2Bound = true;
+
+  const overlay = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
+  let ovTimer = setInterval(tick, 200);
+
+  const pendingMap = Object.create(null);
+
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d || !d.__RSX_V2__ || d.type !== 'QEVENT_V2') return;
+    if (d.sub === 'tick') {
+      overlay.processed = d.processed;
+      overlay.total = d.total;
+      overlay.phase = d.phase;
+      overlay.nextActionAt = d.nextActionAt || null;
+      const prog = document.querySelector('#rsx-prog');
+      if (prog) prog.textContent = `${overlay.processed} / ${overlay.total}`;
+      const ph = document.querySelector('#rsx-phase');
+      if (ph) ph.textContent = overlay.phase;
+      if (!ovTimer && overlay.phase !== 'done' && overlay.phase !== 'paused') {
+        ovTimer = setInterval(tick, 200);
+      }
+      if (overlay.phase === 'done') {
+        clearInterval(ovTimer);
+        ovTimer = null;
+        overlay.nextActionAt = null;
+        tick();
+      }
+    } else if (d.sub === 'item') {
+      const uname = d.username;
+      if (!applyRowStatus(uname, d)) pendingMap[uname] = d;
+    } else if (d.sub === 'done') {
+      overlay.phase = 'done';
+      overlay.nextActionAt = null;
+      const ph = document.querySelector('#rsx-phase');
+      if (ph) ph.textContent = overlay.phase;
+      const prog = document.querySelector('#rsx-prog');
+      if (prog) prog.textContent = `${d.processed} / ${d.total}`;
+      clearInterval(ovTimer);
+      ovTimer = null;
+      tick();
+    }
+  });
+
+  window.__rsxApplyPendingV2 = function applyPendingOnPage() {
+    for (const uname in pendingMap) {
+      if (applyRowStatus(uname, pendingMap[uname])) delete pendingMap[uname];
+    }
+  };
+
+  function applyRowStatus(username, d) {
+    const tr = document.querySelector(`[data-username="@${username}"]`);
+    if (!tr) return false;
+    const td = tr.querySelector('td.status');
+    if (!td) return false;
+    td.innerHTML = renderChip(d.result, d.message);
+    return true;
+  }
+
+  function renderChip(result, message) {
+    switch (result) {
+      case 'followed':
+        return '<span class="badge success">Seguido</span>';
+      case 'liked':
+        return '<span class="badge success">Curtido</span>';
+      case 'already_following':
+        return '<span class="badge wait">Já seguia</span>';
+      case 'no_media':
+      case 'skipped':
+        return `<span class="badge wait">${message || result}</span>`;
+      case 'error':
+        return `<span class="badge error">${message || 'Erro'}</span>`;
+      default:
+        return `<span class="badge wait">${message || result || ''}</span>`;
+    }
+  }
+
+  function tick() {
+    const etaEl = document.querySelector('#rsx-eta');
+    if (!etaEl) return;
+    if (!overlay.nextActionAt) {
+      etaEl.textContent = '--:--.-';
+      return;
+    }
+    const rem = Math.max(0, overlay.nextActionAt - Date.now());
+    const m = Math.floor(rem / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
+    const d = Math.floor((rem % 1000) / 100);
+    etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+  }
+})();
