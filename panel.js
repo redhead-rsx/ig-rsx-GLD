@@ -41,7 +41,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     const row = followers.find((f) => f.id === msg.id);
     if (row) {
       row.status = { ...(row.status || {}), ...msg.status };
-      renderTable();
+      updateRow(msg.id);
     }
   } else if (msg.type === 'QUEUE_TICK') {
     ov.processed = msg.processed || 0;
@@ -64,15 +64,6 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     }
   } else if (msg.type === 'QUEUE_DONE') {
     running = false;
-    ov.processed = msg.processed || ov.processed;
-    ov.total = msg.total || ov.total;
-    ov.phase = 'done';
-    ov.nextActionAt = null;
-    qs('#rsx-prog').textContent = `${ov.processed} / ${ov.total}`;
-    qs('#rsx-phase').textContent = ov.phase;
-    clearInterval(ovTimer);
-    ovTimer = null;
-    tickOverlay();
     updateRunButtons();
   }
 };
@@ -201,6 +192,7 @@ function renderTable() {
   }
   for (const f of list) {
     const tr = document.createElement('tr');
+    tr.dataset.id = String(f.id);
     const tdChk = document.createElement('td');
     const chk = document.createElement('input');
     chk.type = 'checkbox';
@@ -212,11 +204,21 @@ function renderTable() {
     const tdUser = document.createElement('td');
     tdUser.textContent = '@' + f.username;
     const tdStatus = document.createElement('td');
+    tdStatus.className = 'status';
     tdStatus.innerHTML = renderStatus(f.status);
     tr.appendChild(tdChk);
     tr.appendChild(tdUser);
     tr.appendChild(tdStatus);
     body.appendChild(tr);
+  }
+}
+
+function updateRow(id) {
+  const rowEl = qs(`#queueTable tbody tr[data-id="${id}"]`);
+  if (rowEl) {
+    const st = followers.find((f) => f.id === id)?.status;
+    const tdStatus = rowEl.querySelector('td.status');
+    if (tdStatus) tdStatus.innerHTML = renderStatus(st);
   }
 }
 
