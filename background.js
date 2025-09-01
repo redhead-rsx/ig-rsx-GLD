@@ -75,6 +75,7 @@ function stopQueue() {
   q.nextActionAt = null;
   q.phase = 'paused';
   emitTick();
+  emitTickV2();
 }
 
 function postToPanel(message) {
@@ -113,11 +114,30 @@ function emitTick(extra = {}) {
   });
 }
 
+function postV2(message) {
+  postToPanel(message);
+  chrome.runtime.sendMessage(message);
+}
+
+function emitTickV2(extra = {}) {
+  postV2({
+    __RSX_V2__: true,
+    type: 'QEVENT_V2',
+    sub: 'tick',
+    processed: q.processed,
+    total: q.total,
+    phase: q.phase,
+    nextActionAt: q.nextActionAt,
+    ...extra,
+  });
+}
+
 function scheduleNext(waitMs) {
   q.phase = 'waiting';
   q.nextActionAt = Date.now() + waitMs;
   clearTimeout(q.timer);
   emitTick({ nextDelayMs: waitMs });
+  emitTickV2();
   q.timer = setTimeout(startAction, waitMs);
 }
 
@@ -128,6 +148,7 @@ async function startAction() {
   }
   q.phase = 'executing';
   emitTick();
+  emitTickV2();
   const item = q.items[q.idx];
   const resp = await execWithTimeout(item);
   handleResult(resp);
@@ -190,6 +211,21 @@ function handleResult(resp) {
   const item = q.items[q.idx];
   const status = resp.status || (resp.ok ? {} : { error: resp.error });
   postToPanel({ type: 'ROW_UPDATE', index: q.idx, id: item.id, status });
+  const v2res = {
+    __RSX_V2__: true,
+    type: 'QEVENT_V2',
+    sub: 'item',
+    username: item.username,
+    userId: item.id,
+    result: status.error
+      ? 'error'
+      : status.result ||
+        (status.skip_reason === 'already_following'
+          ? 'already_following'
+          : 'skipped'),
+    message: status.error || status.skip_reason,
+  };
+  postV2(v2res);
   q.processed++;
   summary.processed = q.processed;
   if (status.result === 'already_following' || status.skip_reason === 'already_following') {
@@ -218,6 +254,7 @@ function handleResult(resp) {
     q.nextActionAt = Date.now() + ms;
     clearTimeout(q.timer);
     emitTick({ backoffMs: ms });
+    emitTickV2({ backoffMs: ms });
     q.timer = setTimeout(() => scheduleNext(computeNextDelayMs(state.cfg)), ms);
   } else {
     scheduleNext(computeNextDelayMs(state.cfg));
@@ -230,7 +267,15 @@ function finishQueue() {
   q.timer = null;
   q.nextActionAt = null;
   emitTick();
+  emitTickV2();
   postToPanel({ type: 'QUEUE_DONE', processed: q.processed, total: q.total });
+  postV2({
+    __RSX_V2__: true,
+    type: 'QEVENT_V2',
+    sub: 'done',
+    processed: q.processed,
+    total: q.total,
+  });
   chrome.runtime.sendMessage({
     type: 'QUEUE_SUMMARY',
     processed: summary.processed,

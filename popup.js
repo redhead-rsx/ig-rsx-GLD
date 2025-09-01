@@ -15,7 +15,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'QUEUE_SUMMARY') {
+  if (msg?.__RSX_V2__ && msg.type === 'QEVENT_V2') {
+    if (msg.sub === 'tick' || msg.sub === 'done') {
+      const sumEl = document.getElementById('summary');
+      if (!sumEl) return;
+      sumEl.style.display = 'block';
+      document.getElementById('sumProcessed').textContent = `${msg.processed}/${msg.total}`;
+    }
+  } else if (msg?.type === 'QUEUE_SUMMARY') {
     const sumEl = document.getElementById('summary');
     if (!sumEl) return;
     sumEl.style.display = 'block';
