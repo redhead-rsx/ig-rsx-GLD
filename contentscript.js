@@ -13,35 +13,41 @@ function log(...args) {
   log('injected helpers');
 })();
 
-let nextRequestId = 1;
-const pendingTasks = new Map();
+const pending = {};
 
 if (window.__IG_CS_TASK_HANDLER) {
   window.removeEventListener('message', window.__IG_CS_TASK_HANDLER);
 }
 window.__IG_CS_TASK_HANDLER = (ev) => {
   const data = ev.data;
-  if (data?.__BOT__ && data.type === 'TASK_RESULT') {
-    const fn = pendingTasks.get(data.requestId);
-    if (fn) {
-      pendingTasks.delete(data.requestId);
-      fn(data);
-    }
+  if (data?.__BOT__ && data.type === 'TASK_RESULT' && pending[data.requestId]) {
+    pending[data.requestId](data);
+    delete pending[data.requestId];
   }
 };
 window.addEventListener('message', window.__IG_CS_TASK_HANDLER);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "OPEN_PANEL") {
+  if (msg.type === 'OPEN_PANEL') {
     openPanel();
-  } else if (msg.type === "EXEC") {
-    log('exec from bg', msg.action);
-    execTask(msg.action, msg.payload).then((res) => sendResponse(res));
+  } else if (msg.type === 'EXEC_TASK') {
+    const id = Date.now() + '_' + Math.random();
+    pending[id] = (res) => sendResponse({ ok: res.ok, data: res.data, error: res.error });
+    window.postMessage(
+      {
+        __BOT__: true,
+        type: 'TASK',
+        requestId: id,
+        action: msg.action,
+        payload: msg.payload,
+      },
+      '*',
+    );
     return true;
   } else if (
-    ["ROW_UPDATE", "PROGRESS", "STOPPED", "FOLLOWERS_LOADED"].includes(msg.type)
+    ['ROW_UPDATE', 'PROGRESS', 'STOPPED', 'FOLLOWERS_LOADED'].includes(msg.type)
   ) {
-    window.postMessage(msg, "*");
+    window.postMessage(msg, '*');
   }
 });
 
@@ -82,19 +88,19 @@ async function openPanel() {
 
 function execTask(action, payload = {}) {
   return new Promise((resolve) => {
-    const requestId = nextRequestId++;
+    const id = Date.now() + '_' + Math.random();
     const timeout = setTimeout(() => {
-      pendingTasks.delete(requestId);
-      resolve({ ok: false, error: "no_response" });
+      delete pending[id];
+      resolve({ ok: false, error: 'no_response' });
     }, 10000);
-    pendingTasks.set(requestId, (res) => {
+    pending[id] = (res) => {
       clearTimeout(timeout);
       resolve({ ok: res.ok, data: res.data, error: res.error });
-    });
+    };
     log('execTask', action, payload);
     window.postMessage(
-      { __BOT__: true, type: "TASK", action, payload, requestId },
-      "*",
+      { __BOT__: true, type: 'TASK', action, payload, requestId: id },
+      '*',
     );
   });
 }

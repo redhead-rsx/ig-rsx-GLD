@@ -44,25 +44,25 @@ function stop() {
 
 function execCommand(tabId, action, payload) {
   return new Promise((resolve) => {
-    let done = false;
+    let finished = false;
+    const handleResult = (res) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(res);
+    };
     const timer = setTimeout(() => {
-      if (!done) {
-        done = true;
-        resolve({ ok: false, error: 'no_response' });
-      }
-    }, 10000);
+      handleResult({ ok: false, error: 'timeout' });
+    }, 5000);
     log('exec', action, payload);
     chrome.tabs.sendMessage(
       tabId,
-      { type: 'EXEC', action, payload },
-      (res) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
+      { type: 'EXEC_TASK', action, payload },
+      (response) => {
         if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          handleResult({ ok: false, error: chrome.runtime.lastError.message });
         } else {
-          resolve(res || { ok: false, error: 'no_response' });
+          handleResult(response || { ok: false, error: 'no_response' });
         }
       },
     );
