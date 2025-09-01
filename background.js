@@ -9,8 +9,13 @@ let queue = [];
 let running = false;
 let processed = 0;
 let timer = null;
+let total = 0;
 let state = { mode: 'follow', likeCount: 0, cfg: { ...DEFAULT_CFG } };
 let cachedCfg = { ...DEFAULT_CFG };
+let nextActionAt = null;
+let activeTabId = null;
+let lock = false;
+let backoffStep = 0;
 
 function log(...args) {
   console.debug('[bg]', ...args);
@@ -26,16 +31,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return sendResponse({ ok: false, error: 'invalid_mode' });
     if (!Array.isArray(targets) || !targets.length)
       return sendResponse({ ok: false, error: 'invalid_targets' });
-    queue = targets.slice();
-    processed = 0;
-    state = { mode, likeCount: likeCount || 0, cfg: { ...DEFAULT_CFG, ...(cfg || {}) } };
-    running = true;
-    log('start', queue.length, mode);
-    processNext();
-    sendResponse({ ok: true });
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      activeTabId = tabs[0]?.id || null;
+      if (!activeTabId) {
+        return sendResponse({ ok: false, error: 'no_tab' });
+      }
+      queue = targets.slice();
+      processed = 0;
+      total = queue.length;
+      state = {
+        mode,
+        likeCount: likeCount || 0,
+        cfg: { ...DEFAULT_CFG, ...(cfg || {}) },
+      };
+      running = true;
+      backoffStep = 0;
+      log('start', queue.length, mode);
+      scheduleNext(0, 'waiting', { nextDelayMs: 0 });
+      sendResponse({ ok: true });
+    });
     return true;
   } else if (msg.type === 'STOP_QUEUE') {
-    stop('STOPPED');
+    stop();
     sendResponse({ ok: true });
   } else if (msg.type === 'CFG_UPDATED') {
     cachedCfg = { ...cachedCfg, ...(msg.cfg || {}) };
@@ -43,18 +60,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-function stop(reason = 'STOPPED') {
+function stop() {
   running = false;
   queue = [];
   if (timer) {
     clearTimeout(timer);
     timer = null;
   }
-  log('stop', reason);
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tabId = tabs[0]?.id;
-    if (tabId) chrome.tabs.sendMessage(tabId, { type: reason });
-  });
+  nextActionAt = null;
+  lock = false;
+  backoffStep = 0;
+  emitTick('paused');
 }
 
 function sendToTab(tabId, message, timeoutMs = 5000) {
@@ -86,29 +102,23 @@ async function execCommand(tabId, action, payload) {
   log('exec', action, payload);
   return sendToTab(tabId, { type: 'EXEC_TASK', action, payload });
 }
-
-async function processNext() {
-  if (!running) return;
+async function runNext() {
+  if (!running || lock) return;
   if (!queue.length) {
-    stop('DONE');
+    finish();
     return;
   }
+  lock = true;
   const item = queue.shift();
-  const tab = await new Promise((r) =>
-    chrome.tabs.query({ active: true, currentWindow: true }, (t) => r(t[0]))
-  );
-  const tabId = tab?.id;
-  if (!tabId) {
-    stop('STOPPED');
-    return;
-  }
+  emitTick('executing', { current: { id: item.id, username: item.username } });
+  let transient = false;
   try {
     if (state.mode === 'follow' || state.mode === 'follow_like') {
-      const res = await execCommand(tabId, 'FOLLOW', {
+      const res = await execCommand(activeTabId, 'FOLLOW', {
         userId: item.id,
         username: item.username,
       });
-      chrome.tabs.sendMessage(tabId, {
+      chrome.tabs.sendMessage(activeTabId, {
         type: 'ROW_UPDATE',
         id: item.id,
         status: { followed: !!res?.ok, error: res?.ok ? undefined : res?.error },
@@ -116,17 +126,17 @@ async function processNext() {
       if (!res?.ok) throw new Error(res.error || 'follow_failed');
     }
     if (state.mode === 'follow_like') {
-      const total = state.likeCount || 0;
-      for (let i = 0; i < total; i++) {
-        const r = await execCommand(tabId, 'LIKE', {
+      const totalLikes = state.likeCount || 0;
+      for (let i = 0; i < totalLikes; i++) {
+        const r = await execCommand(activeTabId, 'LIKE', {
           userId: item.id,
           username: item.username,
         });
-        chrome.tabs.sendMessage(tabId, {
+        chrome.tabs.sendMessage(activeTabId, {
           type: 'ROW_UPDATE',
           id: item.id,
           status: {
-            likesTotal: total,
+            likesTotal: totalLikes,
             likesDone: i + 1,
             error: r?.ok ? undefined : r?.error,
           },
@@ -135,38 +145,41 @@ async function processNext() {
       }
     }
     if (state.mode === 'unfollow') {
-      const r = await execCommand(tabId, 'UNFOLLOW', {
+      const r = await execCommand(activeTabId, 'UNFOLLOW', {
         userId: item.id,
         username: item.username,
       });
-      chrome.tabs.sendMessage(tabId, {
+      chrome.tabs.sendMessage(activeTabId, {
         type: 'ROW_UPDATE',
         id: item.id,
         status: { unfollowed: !!r?.ok, error: r?.ok ? undefined : r?.error },
       });
       if (!r?.ok) throw new Error(r.error || 'unfollow_failed');
     }
+    resetBackoff();
   } catch (e) {
-    chrome.tabs.sendMessage(tabId, {
+    const err = String(e.message || e);
+    chrome.tabs.sendMessage(activeTabId, {
       type: 'ROW_UPDATE',
       id: item.id,
-      status: { error: String(e.message || e) },
+      status: { error: err },
     });
+    transient = isTransientError(err);
   }
   processed++;
-  const total = processed + queue.length;
-  const delay = nextDelay();
-  chrome.tabs.sendMessage(tabId, {
-    type: 'PROGRESS',
-    done: processed,
-    total,
-    etaMs: delay,
-  });
+  lock = false;
+  if (!running) return;
   if (queue.length === 0) {
-    timer = setTimeout(() => stop('DONE'), delay);
+    finish();
     return;
   }
-  timer = setTimeout(processNext, delay);
+  if (transient) {
+    const backoffMs = calcBackoff();
+    scheduleNext(backoffMs, 'backoff', { backoffMs });
+  } else {
+    const delay = nextDelay();
+    scheduleNext(delay, 'waiting', { nextDelayMs: delay });
+  }
 }
 
 function nextDelay() {
@@ -174,4 +187,51 @@ function nextDelay() {
   const jitterPct = parseInt(state.cfg.jitterPct, 10) || 0;
   const jitter = ((base * jitterPct) / 100) * (Math.random() * 2 - 1);
   return Math.max(0, Math.round(base + jitter));
+}
+
+function calcBackoff() {
+  const base = parseInt(state.cfg.baseDelayMs, 10) || 1000;
+  const ms = Math.min(60000, base * Math.pow(2, backoffStep));
+  backoffStep++;
+  return ms;
+}
+
+function resetBackoff() {
+  backoffStep = 0;
+}
+
+function isTransientError(err) {
+  return /429|rate|timeout|temporarily/i.test(err);
+}
+
+function scheduleNext(delay, phase, extra = {}) {
+  if (timer) clearTimeout(timer);
+  nextActionAt = Date.now() + delay;
+  timer = setTimeout(runNext, delay);
+  emitTick(phase, { ...extra, nextActionAt });
+}
+
+function emitTick(phase, extra = {}) {
+  if (!activeTabId) return;
+  chrome.tabs.sendMessage(activeTabId, {
+    type: 'QUEUE_TICK',
+    processed,
+    total,
+    phase,
+    ...extra,
+  });
+}
+
+function finish() {
+  running = false;
+  timer = null;
+  nextActionAt = null;
+  emitTick('done');
+  if (activeTabId) {
+    chrome.tabs.sendMessage(activeTabId, {
+      type: 'QUEUE_DONE',
+      processed,
+      total,
+    });
+  }
 }

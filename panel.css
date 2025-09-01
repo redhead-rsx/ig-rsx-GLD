@@ -75,21 +75,6 @@ button:disabled {
   background: #444;
   margin: 0 2px;
 }
-.hud {
-  position: fixed;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #222;
-  padding: 6px 10px;
-  border-radius: 6px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.hud.hidden {
-  display: none;
-}
 .badge {
   padding: 2px 4px;
   border-radius: 4px;
@@ -112,4 +97,21 @@ button:disabled {
 }
 .tab-content.active {
   display: block;
+}
+
+#rsx-overlay {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  background: rgba(20, 20, 20, 0.85);
+  color: #eee;
+  font: 12px/1.4 system-ui, sans-serif;
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 2147483647;
+  pointer-events: none;
+}
+#rsx-overlay .rsx-ov-line {
+  margin: 2px 0;
 }
