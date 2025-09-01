@@ -10,7 +10,8 @@ let followers = [];
 let page = 1;
 let pageSize = DEFAULT_CFG.pageSize;
 let running = false;
-let countdownTimer = null;
+let ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
+let ovTimer = null;
 
 function send(msg) {
   window.postMessage({ from: 'ig-panel', ...msg }, '*');
@@ -28,7 +29,6 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
   if (msg.type === 'PANEL_READY') {
     init();
   } else if (msg.type === 'FOLLOWERS_LOADED') {
-    qs('#progressHud').classList.add('hidden');
     if (msg.error) {
       alert(msg.error);
       return;
@@ -43,13 +43,36 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
       row.status = { ...(row.status || {}), ...msg.status };
       renderTable();
     }
-  } else if (msg.type === 'PROGRESS') {
-    qs('#progressText').textContent = `${msg.done}/${msg.total}`;
-    startCountdown(msg.etaMs || 0);
-    qs('#progressHud').classList.remove('hidden');
-  } else if (msg.type === 'DONE' || msg.type === 'STOPPED') {
+  } else if (msg.type === 'QUEUE_TICK') {
+    ov.processed = msg.processed || 0;
+    ov.total = msg.total || 0;
+    ov.phase = msg.phase || 'idle';
+    ov.nextActionAt = msg.nextActionAt || null;
+    qs('#rsx-prog').textContent = `${ov.processed} / ${ov.total}`;
+    qs('#rsx-phase').textContent = ov.phase;
+    tickOverlay();
+    if (!ovTimer && ov.phase !== 'done' && ov.phase !== 'paused') {
+      ovTimer = setInterval(tickOverlay, 200);
+    }
+    if (ov.phase === 'done' || ov.phase === 'paused') {
+      running = false;
+      clearInterval(ovTimer);
+      ovTimer = null;
+      ov.nextActionAt = null;
+      tickOverlay();
+      updateRunButtons();
+    }
+  } else if (msg.type === 'QUEUE_DONE') {
     running = false;
-    qs('#progressHud').classList.add('hidden');
+    ov.processed = msg.processed || ov.processed;
+    ov.total = msg.total || ov.total;
+    ov.phase = 'done';
+    ov.nextActionAt = null;
+    qs('#rsx-prog').textContent = `${ov.processed} / ${ov.total}`;
+    qs('#rsx-phase').textContent = ov.phase;
+    clearInterval(ovTimer);
+    ovTimer = null;
+    tickOverlay();
     updateRunButtons();
   }
 };
@@ -81,7 +104,6 @@ function init() {
   });
   qs('#btnStart').addEventListener('click', startProcessing);
   qs('#btnStop').addEventListener('click', stopProcessing);
-  qs('#btnStopHud').addEventListener('click', stopProcessing);
   qs('#pageSize').addEventListener('change', () => {
     pageSize = parseInt(qs('#pageSize').value, 10);
     cfg.pageSize = pageSize;
@@ -149,14 +171,11 @@ function startProcessing() {
   send({ type: 'START_QUEUE', mode, likeCount, targets, cfg: cfgSnapshot });
   running = true;
   updateRunButtons();
-  qs('#progressText').textContent = 'Processando...';
-  qs('#progressHud').classList.remove('hidden');
 }
 
 function stopProcessing() {
   send({ type: 'STOP_QUEUE' });
   running = false;
-  qs('#progressHud').classList.add('hidden');
   updateRunButtons();
 }
 
@@ -216,21 +235,17 @@ function updatePager() {
   qs('#pageSize').value = String(pageSize);
 }
 
-function startCountdown(ms) {
-  clearInterval(countdownTimer);
-  let remain = Math.floor(ms / 1000);
-  const el = qs('#countdown');
-  const update = () => {
-    const m = String(Math.floor(remain / 60)).padStart(2, '0');
-    const s = String(remain % 60).padStart(2, '0');
-    el.textContent = `${m}:${s}`;
-  };
-  update();
-  countdownTimer = setInterval(() => {
-    remain = Math.max(0, remain - 1);
-    update();
-    if (remain <= 0) clearInterval(countdownTimer);
-  }, 1000);
+function tickOverlay() {
+  const etaEl = qs('#rsx-eta');
+  if (!ov.nextActionAt) {
+    etaEl.textContent = '--:--.-';
+    return;
+  }
+  const rem = Math.max(0, ov.nextActionAt - Date.now());
+  const m = Math.floor(rem / 60000);
+  const s = Math.floor((rem % 60000) / 1000);
+  const d = Math.floor((rem % 1000) / 100);
+  etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
 }
 function handleLikeInput() {
   const v = parseInt(qs('#likeCount').value, 10) || 0;

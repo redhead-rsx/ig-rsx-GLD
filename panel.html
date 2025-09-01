@@ -44,11 +44,6 @@
         </select>
       </div>
     </div>
-    <div id="progressHud" class="hud hidden">
-      <span id="progressText">0/0</span>
-      <span>Próxima em <span id="countdown">00:00</span></span>
-      <button id="btnStopHud">Parar</button>
-    </div>
   </div>
   <div id="tab-settings" class="tab-content">
       <div class="card">
@@ -66,4 +61,10 @@
         <div class="dialog-buttons"><button id="cfgSave">Salvar</button></div>
       </div>
   </div>
+</div>
+
+<div id="rsx-overlay" class="rsx-ov">
+  <div class="rsx-ov-line"><b>Próxima ação em:</b> <span id="rsx-eta">--:--.-</span></div>
+  <div class="rsx-ov-line"><b>Progresso:</b> <span id="rsx-prog">0 / 0</span></div>
+  <div class="rsx-ov-line"><b>Status:</b> <span id="rsx-phase">idle</span></div>
 </div>

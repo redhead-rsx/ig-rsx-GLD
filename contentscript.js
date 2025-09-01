@@ -60,7 +60,7 @@ if (window.__IG_CS_TASK_HANDLER) {
       );
       return true;
     } else if (
-      ['ROW_UPDATE', 'PROGRESS', 'DONE', 'STOPPED', 'FOLLOWERS_LOADED'].includes(
+      ['ROW_UPDATE', 'QUEUE_TICK', 'QUEUE_DONE', 'FOLLOWERS_LOADED'].includes(
         msg.type,
       )
     ) {
