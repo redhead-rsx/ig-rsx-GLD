@@ -60,7 +60,9 @@ if (window.__IG_CS_TASK_HANDLER) {
       );
       return true;
     } else if (
-      ['ROW_UPDATE', 'PROGRESS', 'STOPPED', 'FOLLOWERS_LOADED'].includes(msg.type)
+      ['ROW_UPDATE', 'PROGRESS', 'DONE', 'STOPPED', 'FOLLOWERS_LOADED'].includes(
+        msg.type,
+      )
     ) {
       window.postMessage(msg, '*');
     }
@@ -174,13 +176,20 @@ window.addEventListener("message", async (ev) => {
       { type: "FOLLOWERS_LOADED", items: res.items, total: res.total, error: res.error },
       "*",
     );
-  } else if (msg.type === "START_PROCESS") {
-    chrome.runtime.sendMessage({
-      type: "START_PROCESS",
-      items: msg.items,
-      settings: msg.settings,
-    });
-  } else if (msg.type === "STOP_PROCESS") {
-    chrome.runtime.sendMessage({ type: "STOP_PROCESS" });
+  } else if (msg.type === "START_QUEUE") {
+    chrome.runtime.sendMessage(
+      {
+        type: "START_QUEUE",
+        mode: msg.mode,
+        likeCount: msg.likeCount,
+        targets: msg.targets,
+        cfg: msg.cfg,
+      },
+      (resp) => {
+        window.postMessage({ type: "QUEUE_STARTED", ok: resp?.ok }, "*");
+      },
+    );
+  } else if (msg.type === "STOP_QUEUE") {
+    chrome.runtime.sendMessage({ type: "STOP_QUEUE" });
   }
 });

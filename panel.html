@@ -14,12 +14,12 @@
           <button id="btnLoadFollowing">Carregar Seguidos da Página Atual</button>
         </div>
       </div>
-      <div class="dropdown">
+      <div class="dropdown" id="dropdownProcess">
         <button id="btnProcess">Processar Fila</button>
         <div id="processMenu" class="menu">
-          <label><input type="radio" name="actionMode" value="follow" checked> Seguir</label>
-          <label><input type="radio" name="actionMode" value="follow_like"> Seguir + Curtir <input id="likeCount" type="number" min="1" max="12" value="1"></label>
-          <label><input type="radio" name="actionMode" value="unfollow"> Deixar de seguir</label>
+          <label><input id="modeFollow" type="radio" name="actionMode" value="follow" checked> Seguir</label>
+          <label><input id="modeFollowLike" type="radio" name="actionMode" value="follow_like"> Seguir + Curtir <input id="likeCount" type="number" min="0" max="12" value="1"></label>
+          <label><input id="modeUnfollow" type="radio" name="actionMode" value="unfollow"> Deixar de seguir</label>
           <div class="dialog-buttons"><button id="btnProcessConfirm">Iniciar</button></div>
         </div>
       </div>
@@ -51,10 +51,19 @@
     </div>
   </div>
   <div id="tab-settings" class="tab-content">
-    <div class="card">
-      <label>Aguardar <input id="cfgDelay" type="number" min="0" /> ms entre ações</label>
-      <label>Aleatório até <input id="cfgJitter" type="number" min="0" max="100" />%</label>
-      <label>Tamanho da página padrão <input id="cfgPageSize" type="number" min="10" max="200" step="10" /></label>
-    </div>
+      <div class="card">
+        <label>Aguardar <input id="cfgDelayMs" type="number" min="0" /> ms entre ações</label>
+        <label>Aleatório até <input id="cfgJitterPct" type="number" min="0" max="100" />%</label>
+        <label>Tamanho da página padrão <input id="cfgPageSize" type="number" min="10" max="200" step="10" /></label>
+        <label>Curtidas por perfil (default) <input id="cfgLikePerProfile" type="number" min="0" max="12" /></label>
+        <label>Modo padrão
+          <select id="cfgMode">
+            <option value="follow">Seguir</option>
+            <option value="follow_like">Seguir + Curtir</option>
+            <option value="unfollow">Deixar de seguir</option>
+          </select>
+        </label>
+        <div class="dialog-buttons"><button id="cfgSave">Salvar</button></div>
+      </div>
   </div>
 </div>

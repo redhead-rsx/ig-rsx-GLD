@@ -1,8 +1,16 @@
+const DEFAULT_CFG = {
+  baseDelayMs: 3000,
+  jitterPct: 20,
+  pageSize: 10,
+  likePerProfile: 1,
+  actionModeDefault: 'follow_like',
+};
 let queue = [];
 let running = false;
 let processed = 0;
 let timer = null;
-let currentSettings = {};
+let state = { mode: 'follow', likeCount: 0, cfg: { ...DEFAULT_CFG } };
+let cachedCfg = { ...DEFAULT_CFG };
 
 function log(...args) {
   console.debug('[bg]', ...args);
@@ -11,36 +19,41 @@ function log(...args) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'PING_SW') {
     sendResponse({ ok: true, from: 'sw' });
-  } else if (msg.type === 'START_PROCESS') {
-    if (running) {
-      sendResponse({ ok: false });
-      return;
-    }
-    queue = msg.items || [];
+  } else if (msg.type === 'START_QUEUE') {
+    if (running) return sendResponse({ ok: false, error: 'already_running' });
+    const { mode, likeCount, targets, cfg } = msg;
+    if (!['follow', 'follow_like', 'unfollow'].includes(mode))
+      return sendResponse({ ok: false, error: 'invalid_mode' });
+    if (!Array.isArray(targets) || !targets.length)
+      return sendResponse({ ok: false, error: 'invalid_targets' });
+    queue = targets.slice();
     processed = 0;
-    currentSettings = msg.settings || {};
+    state = { mode, likeCount: likeCount || 0, cfg: { ...DEFAULT_CFG, ...(cfg || {}) } };
     running = true;
-    log('start', queue.length);
+    log('start', queue.length, mode);
     processNext();
     sendResponse({ ok: true });
     return true;
-  } else if (msg.type === 'STOP_PROCESS') {
-    stop();
+  } else if (msg.type === 'STOP_QUEUE') {
+    stop('STOPPED');
+    sendResponse({ ok: true });
+  } else if (msg.type === 'CFG_UPDATED') {
+    cachedCfg = { ...cachedCfg, ...(msg.cfg || {}) };
     sendResponse({ ok: true });
   }
 });
 
-function stop() {
+function stop(reason = 'STOPPED') {
   running = false;
   queue = [];
   if (timer) {
     clearTimeout(timer);
     timer = null;
   }
-  log('stop');
+  log('stop', reason);
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tabId = tabs[0]?.id;
-    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'STOPPED' });
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: reason });
   });
 }
 
@@ -77,7 +90,7 @@ async function execCommand(tabId, action, payload) {
 async function processNext() {
   if (!running) return;
   if (!queue.length) {
-    stop();
+    stop('DONE');
     return;
   }
   const item = queue.shift();
@@ -86,11 +99,11 @@ async function processNext() {
   );
   const tabId = tab?.id;
   if (!tabId) {
-    stop();
+    stop('STOPPED');
     return;
   }
   try {
-    if (currentSettings.actionMode === 'follow' || currentSettings.actionMode === 'follow_like') {
+    if (state.mode === 'follow' || state.mode === 'follow_like') {
       const res = await execCommand(tabId, 'FOLLOW', {
         userId: item.id,
         username: item.username,
@@ -102,8 +115,8 @@ async function processNext() {
       });
       if (!res?.ok) throw new Error(res.error || 'follow_failed');
     }
-    if (currentSettings.actionMode === 'follow_like') {
-      const total = currentSettings.likeCount || 0;
+    if (state.mode === 'follow_like') {
+      const total = state.likeCount || 0;
       for (let i = 0; i < total; i++) {
         const r = await execCommand(tabId, 'LIKE', {
           userId: item.id,
@@ -121,7 +134,7 @@ async function processNext() {
         if (!r?.ok) throw new Error(r.error || 'like_failed');
       }
     }
-    if (currentSettings.actionMode === 'unfollow') {
+    if (state.mode === 'unfollow') {
       const r = await execCommand(tabId, 'UNFOLLOW', {
         userId: item.id,
         username: item.username,
@@ -150,15 +163,15 @@ async function processNext() {
     etaMs: delay,
   });
   if (queue.length === 0) {
-    timer = setTimeout(stop, delay);
+    timer = setTimeout(() => stop('DONE'), delay);
     return;
   }
   timer = setTimeout(processNext, delay);
 }
 
 function nextDelay() {
-  const base = parseInt(currentSettings.delayMs, 10) || 0;
-  const jitterPct = parseInt(currentSettings.randomJitterPct, 10) || 0;
-  const jitter = (base * jitterPct) / 100 * (Math.random() * 2 - 1);
+  const base = parseInt(state.cfg.baseDelayMs, 10) || 0;
+  const jitterPct = parseInt(state.cfg.jitterPct, 10) || 0;
+  const jitter = ((base * jitterPct) / 100) * (Math.random() * 2 - 1);
   return Math.max(0, Math.round(base + jitter));
 }

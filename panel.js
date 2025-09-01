@@ -1,16 +1,16 @@
-const SETTINGS_KEY = 'ig_settings';
+const DEFAULT_CFG = {
+  baseDelayMs: 3000,
+  jitterPct: 20,
+  pageSize: 10,
+  likePerProfile: 1,
+  actionModeDefault: 'follow_like',
+};
+let cfg = { ...DEFAULT_CFG };
 let followers = [];
 let page = 1;
-let pageSize = 10;
+let pageSize = DEFAULT_CFG.pageSize;
 let running = false;
 let countdownTimer = null;
-let settings = {
-  delayMs: 0,
-  randomJitterPct: 0,
-  actionMode: 'follow',
-  likeCount: 1,
-  pageSizeDefault: 10,
-};
 
 function send(msg) {
   window.postMessage({ from: 'ig-panel', ...msg }, '*');
@@ -47,7 +47,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     qs('#progressText').textContent = `${msg.done}/${msg.total}`;
     startCountdown(msg.etaMs || 0);
     qs('#progressHud').classList.remove('hidden');
-  } else if (msg.type === 'STOPPED') {
+  } else if (msg.type === 'DONE' || msg.type === 'STOPPED') {
     running = false;
     qs('#progressHud').classList.add('hidden');
     updateRunButtons();
@@ -76,9 +76,6 @@ function init() {
     toggleMenu('#loadMenu');
   });
   qs('#btnProcessConfirm').addEventListener('click', () => {
-    settings.actionMode = document.querySelector('input[name="actionMode"]:checked').value;
-    settings.likeCount = parseInt(qs('#likeCount').value, 10) || 1;
-    saveSettings();
     startProcessing();
     qs('#processMenu').style.display = 'none';
   });
@@ -87,19 +84,21 @@ function init() {
   qs('#btnStopHud').addEventListener('click', stopProcessing);
   qs('#pageSize').addEventListener('change', () => {
     pageSize = parseInt(qs('#pageSize').value, 10);
-    settings.pageSizeDefault = pageSize;
-    saveSettings();
+    cfg.pageSize = pageSize;
+    saveCfg();
     renderTable();
     updatePager();
   });
   qs('#cfgPageSize').addEventListener('change', () => {
-    settings.pageSizeDefault = parseInt(qs('#cfgPageSize').value, 10) || 10;
-    pageSize = settings.pageSizeDefault;
-    saveSettings();
+    cfg.pageSize = parseInt(qs('#cfgPageSize').value, 10) || DEFAULT_CFG.pageSize;
+    pageSize = cfg.pageSize;
+    saveCfg();
     qs('#pageSize').value = String(pageSize);
     renderTable();
     updatePager();
   });
+  qs('#likeCount').addEventListener('input', handleLikeInput);
+  qs('#cfgSave').addEventListener('click', saveCfgFromInputs);
   qs('#prevPage').addEventListener('click', () => {
     if (page > 1) {
       page--;
@@ -119,7 +118,7 @@ function init() {
     followers.forEach((f) => (f.checked = e.target.checked));
     renderTable();
   });
-  loadSettings();
+  loadCfg();
   updateRunButtons();
 }
 
@@ -140,20 +139,22 @@ function toggleMenu(sel) {
 }
 
 function startProcessing() {
-  if (!followers.length) return;
+  if (!followers.length || running) return;
   const selected = followers.filter((f) => f.checked);
   const list = selected.length ? selected : followers;
-  const items = list.map((u) => ({ id: u.id, username: u.username }));
-  settings.delayMs = parseInt(qs('#cfgDelay').value, 10) || 0;
-  settings.randomJitterPct = parseInt(qs('#cfgJitter').value, 10) || 0;
-  saveSettings();
-  send({ type: 'START_PROCESS', items, settings });
+  const targets = list.map((u) => ({ id: u.id, username: u.username }));
+  const mode = document.querySelector('input[name="actionMode"]:checked').value;
+  const likeCount = parseInt(qs('#likeCount').value, 10) || 0;
+  const cfgSnapshot = getCurrentCfg();
+  send({ type: 'START_QUEUE', mode, likeCount, targets, cfg: cfgSnapshot });
   running = true;
   updateRunButtons();
+  qs('#progressText').textContent = 'Processando...';
+  qs('#progressHud').classList.remove('hidden');
 }
 
 function stopProcessing() {
-  send({ type: 'STOP_PROCESS' });
+  send({ type: 'STOP_QUEUE' });
   running = false;
   qs('#progressHud').classList.add('hidden');
   updateRunButtons();
@@ -161,6 +162,8 @@ function stopProcessing() {
 
 function updateRunButtons() {
   qs('#btnStart').disabled = running;
+  qs('#btnProcess').disabled = running;
+  qs('#btnLoad').disabled = running;
   qs('#btnStop').disabled = !running;
 }
 
@@ -229,22 +232,65 @@ function startCountdown(ms) {
     if (remain <= 0) clearInterval(countdownTimer);
   }, 1000);
 }
-
-async function loadSettings() {
-  const st = (await chrome.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY] || {};
-  settings = { ...settings, ...st };
-  qs('#cfgDelay').value = settings.delayMs;
-  qs('#cfgJitter').value = settings.randomJitterPct;
-  qs('#likeCount').value = settings.likeCount;
-  pageSize = settings.pageSizeDefault || 10;
-  qs('#pageSize').value = String(pageSize);
-  qs('#cfgPageSize').value = pageSize;
-  const radio = document.querySelector(
-    `input[name="actionMode"][value="${settings.actionMode}"]`
-  );
-  if (radio) radio.checked = true;
+function handleLikeInput() {
+  const v = parseInt(qs('#likeCount').value, 10) || 0;
+  const radio = qs('#modeFollowLike');
+  radio.disabled = v <= 0;
+  if (v <= 0 && radio.checked) qs('#modeFollow').checked = true;
 }
 
-function saveSettings() {
-  chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+function getCurrentCfg() {
+  return {
+    baseDelayMs: +qs('#cfgDelayMs').value || cfg.baseDelayMs || DEFAULT_CFG.baseDelayMs,
+    jitterPct: +qs('#cfgJitterPct').value || cfg.jitterPct || DEFAULT_CFG.jitterPct,
+    pageSize: cfg.pageSize || DEFAULT_CFG.pageSize,
+    likePerProfile:
+      +qs('#cfgLikePerProfile').value || cfg.likePerProfile || DEFAULT_CFG.likePerProfile,
+    actionModeDefault:
+      qs('#cfgMode').value || cfg.actionModeDefault || DEFAULT_CFG.actionModeDefault,
+  };
+}
+
+function saveCfgFromInputs() {
+  cfg = getCurrentCfg();
+  saveCfg();
+  qs('#likeCount').value = String(cfg.likePerProfile);
+  qs('#cfgPageSize').value = cfg.pageSize;
+  qs('#pageSize').value = String(cfg.pageSize);
+  qs('#cfgDelayMs').value = cfg.baseDelayMs;
+  qs('#cfgJitterPct').value = cfg.jitterPct;
+  qs('#cfgLikePerProfile').value = cfg.likePerProfile;
+  qs('#cfgMode').value = cfg.actionModeDefault;
+  qs('#modeFollow').checked = cfg.actionModeDefault === 'follow';
+  qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
+  qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
+  pageSize = cfg.pageSize;
+  renderTable();
+  updatePager();
+  handleLikeInput();
+}
+
+function loadCfg() {
+  chrome.storage.local.get(DEFAULT_CFG, (st) => {
+    cfg = { ...DEFAULT_CFG, ...st };
+    qs('#cfgDelayMs').value = cfg.baseDelayMs;
+    qs('#cfgJitterPct').value = cfg.jitterPct;
+    qs('#cfgPageSize').value = cfg.pageSize;
+    qs('#cfgLikePerProfile').value = cfg.likePerProfile;
+    qs('#cfgMode').value = cfg.actionModeDefault;
+    qs('#likeCount').value = cfg.likePerProfile;
+    qs('#modeFollow').checked = cfg.actionModeDefault === 'follow';
+    qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
+    qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
+    pageSize = cfg.pageSize;
+    qs('#pageSize').value = String(pageSize);
+    handleLikeInput();
+    renderTable();
+    updatePager();
+  });
+}
+
+function saveCfg() {
+  chrome.storage.local.set(cfg);
+  chrome.runtime.sendMessage({ type: 'CFG_UPDATED', cfg });
 }
