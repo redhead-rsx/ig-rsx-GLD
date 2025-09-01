@@ -60,41 +60,60 @@ function execTask(task) {
   });
 }
 
-async function loadFollowers(limit) {
+async function loadUsers(limit, mode) {
   const username = location.pathname.split("/").filter(Boolean)[0];
-  if (!username || limit <= 0) return { items: [], total: 0 };
-  const lookup = await execTask({ kind: "LOOKUP", username }).catch(() => null);
+  if (!username || limit <= 0)
+    return { items: [], total: 0, error: "invalid_username_or_limit" };
+  console.log(`[collect] start ${mode} target ${limit}`);
+  const lookup = await execTask({ kind: "LOOKUP", username }).catch((e) => {
+    console.error("[collect] lookup failed", e);
+    return null;
+  });
   const userId = lookup?.out?.userId || lookup?.out?.id;
-  if (!userId) return { items: [], total: 0 };
+  if (!userId) return { items: [], total: 0, error: "user_not_found" };
+  const seen = new Set();
   let items = [];
   let cursor = null;
   while (items.length < limit) {
     const res = await execTask({
-      kind: "LIST_FOLLOWERS",
+      kind: mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
       userId,
       limit: 24,
       cursor,
-    }).catch(() => null);
+    }).catch((e) => {
+      console.error("[collect] page failed", e);
+      return null;
+    });
     const batch = res?.out?.users || [];
     if (!batch.length) break;
-    const room = limit - items.length;
-    items = items.concat(
-      batch.slice(0, room).map((u) => ({ id: u.id, username: u.username })),
+    for (const u of batch) {
+      if (!seen.has(u.id)) {
+        seen.add(u.id);
+        items.push({ id: u.id, username: u.username });
+      }
+      if (items.length >= limit) break;
+    }
+    console.log(`[collect] fetched ${items.length}/${limit}`);
+    window.postMessage(
+      { type: "PROGRESS", done: items.length, total: limit },
+      "*",
     );
-    cursor = res?.out?.cursor;
+    cursor = res?.out?.nextCursor || res?.out?.cursor;
     if (!cursor) break;
   }
+  items = items.slice(0, limit);
   return { items, total: items.length };
 }
 
 window.addEventListener("message", async (ev) => {
   const msg = ev.data;
   if (!msg || msg.from !== "ig-panel") return;
-  if (msg.type === "LOAD_FOLLOWERS") {
+  if (msg.type === "LOAD_FOLLOWERS" || msg.type === "LOAD_FOLLOWING") {
     const limit = Math.max(0, Math.min(200, parseInt(msg.limit, 10) || 0));
-    const res = await loadFollowers(limit);
+    const mode = msg.type === "LOAD_FOLLOWING" ? "following" : "followers";
+    const res = await loadUsers(limit, mode);
     window.postMessage(
-      { type: "FOLLOWERS_LOADED", items: res.items, total: res.total },
+      { type: "FOLLOWERS_LOADED", items: res.items, total: res.total, error: res.error },
       "*",
     );
   } else if (msg.type === "START_PROCESS") {

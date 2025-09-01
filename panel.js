@@ -25,6 +25,11 @@ window.addEventListener('message', (ev) => {
   if (msg.type === 'PANEL_READY') {
     init();
   } else if (msg.type === 'FOLLOWERS_LOADED') {
+    qs('#progressHud').classList.add('hidden');
+    if (msg.error) {
+      alert(msg.error);
+      return;
+    }
     followers = msg.items || [];
     page = 1;
     renderTable();
@@ -51,6 +56,10 @@ function init() {
   qs('#btnLoadFollowers').addEventListener('click', () => {
     const limit = parseInt(qs('#limit').value, 10) || 0;
     send({ type: 'LOAD_FOLLOWERS', limit });
+  });
+  qs('#btnLoadFollowing').addEventListener('click', () => {
+    const limit = parseInt(qs('#limit').value, 10) || 0;
+    send({ type: 'LOAD_FOLLOWING', limit });
   });
   qs('#btnProcess').addEventListener('click', () => {
     toggleMenu('#processMenu');
