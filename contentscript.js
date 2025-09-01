@@ -1,3 +1,7 @@
+function log(...args) {
+  console.debug('[cs]', ...args);
+}
+
 // Inject helper scripts into the page
 (function inject() {
   for (const f of ["igClient.js", "runner.js", "injected.js"]) {
@@ -6,13 +10,33 @@
     s.type = "module";
     (document.head || document.documentElement).appendChild(s);
   }
+  log('injected helpers');
 })();
+
+let nextRequestId = 1;
+const pendingTasks = new Map();
+
+if (window.__IG_CS_TASK_HANDLER) {
+  window.removeEventListener('message', window.__IG_CS_TASK_HANDLER);
+}
+window.__IG_CS_TASK_HANDLER = (ev) => {
+  const data = ev.data;
+  if (data?.__BOT__ && data.type === 'TASK_RESULT') {
+    const fn = pendingTasks.get(data.requestId);
+    if (fn) {
+      pendingTasks.delete(data.requestId);
+      fn(data);
+    }
+  }
+};
+window.addEventListener('message', window.__IG_CS_TASK_HANDLER);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "OPEN_PANEL") {
     openPanel();
   } else if (msg.type === "EXEC") {
-    dispatchExec(msg.action, msg.payload).then((res) => sendResponse(res));
+    log('exec from bg', msg.action);
+    execTask(msg.action, msg.payload).then((res) => sendResponse(res));
     return true;
   } else if (
     ["ROW_UPDATE", "PROGRESS", "STOPPED", "FOLLOWERS_LOADED"].includes(msg.type)
@@ -23,7 +47,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 async function openPanel() {
   const old = document.getElementById("ig-panel-root");
-  if (old) old.remove();
+  if (old) {
+    window.__IG_PANEL_CLEANUP?.();
+    old.remove();
+  }
+  log('openPanel');
   chrome.storage.local.remove(["ig_queue", "silent.queue.v1"]);
   const root = document.createElement("div");
   root.id = "ig-panel-root";
@@ -52,50 +80,32 @@ async function openPanel() {
   root.appendChild(script);
 }
 
-function execTask(task) {
+function execTask(action, payload = {}) {
   return new Promise((resolve) => {
+    const requestId = nextRequestId++;
     const timeout = setTimeout(() => {
-      window.removeEventListener("message", onMsg);
+      pendingTasks.delete(requestId);
       resolve({ ok: false, error: "no_response" });
     }, 10000);
-    function onMsg(ev) {
-      if (ev.data?.__BOT__ && ev.data.type === "TASK_RESULT") {
-        clearTimeout(timeout);
-        window.removeEventListener("message", onMsg);
-        resolve(ev.data.payload);
-      }
-    }
-    window.addEventListener("message", onMsg);
-    window.postMessage({ __BOT__: true, type: "TASK", task }, "*");
+    pendingTasks.set(requestId, (res) => {
+      clearTimeout(timeout);
+      resolve({ ok: res.ok, data: res.data, error: res.error });
+    });
+    log('execTask', action, payload);
+    window.postMessage(
+      { __BOT__: true, type: "TASK", action, payload, requestId },
+      "*",
+    );
   });
-}
-
-async function dispatchExec(action, payload = {}) {
-  switch (action) {
-    case "FOLLOW":
-      return execTask({ kind: "FOLLOW", ...payload });
-    case "LIKE":
-      return execTask({ kind: "LIKE", ...payload });
-    case "UNFOLLOW":
-      return execTask({ kind: "UNFOLLOW", ...payload });
-    case "LOOKUP":
-      return execTask({ kind: "LOOKUP", ...payload });
-    case "LIST_FOLLOWERS":
-      return execTask({ kind: "LIST_FOLLOWERS", ...payload });
-    case "LIST_FOLLOWING":
-      return execTask({ kind: "LIST_FOLLOWING", ...payload });
-    default:
-      return { ok: false, error: "unknown_action" };
-  }
 }
 
 async function loadUsers(limit, mode) {
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
     return { items: [], total: 0, error: "invalid_username_or_limit" };
-  console.log(`[collect] start ${mode} target ${limit}`);
-  const lookup = await execTask({ kind: "LOOKUP", username }).catch((e) => {
-    console.error("[collect] lookup failed", e);
+  log(`[collect] start ${mode} target ${limit}`);
+  const lookup = await execTask("LOOKUP", { username }).catch((e) => {
+    console.error('[cs]', '[collect] lookup failed', e);
     return null;
   });
   const userId = lookup?.data?.userId || lookup?.data?.id;
@@ -104,13 +114,11 @@ async function loadUsers(limit, mode) {
   let items = [];
   let cursor = null;
   while (items.length < limit) {
-    const res = await execTask({
-      kind: mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
-      userId,
-      limit: 24,
-      cursor,
-    }).catch((e) => {
-      console.error("[collect] page failed", e);
+    const res = await execTask(
+      mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
+      { userId, limit: 24, cursor }
+    ).catch((e) => {
+      console.error('[cs]', '[collect] page failed', e);
       return null;
     });
     const batch = res?.data?.users || [];
@@ -122,7 +130,7 @@ async function loadUsers(limit, mode) {
       }
       if (items.length >= limit) break;
     }
-    console.log(`[collect] fetched ${items.length}/${limit}`);
+    log(`[collect] fetched ${items.length}/${limit}`);
     window.postMessage(
       { type: "PROGRESS", done: items.length, total: limit },
       "*",

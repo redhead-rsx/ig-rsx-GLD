@@ -54,6 +54,10 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
   }
 };
 window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
+window.__IG_PANEL_CLEANUP = () => {
+  window.removeEventListener('message', window.__IG_PANEL_MSG_HANDLER);
+  window.__IG_PANEL_MSG_HANDLER = null;
+};
 
 function init() {
   bindTabs();
