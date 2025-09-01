@@ -147,6 +147,16 @@ export class IGClient {
     };
   }
 
+  async getFriendshipStatusBulk(userIds = []) {
+    if (!Array.isArray(userIds) || userIds.length === 0) return {};
+    const qs = { user_ids: userIds.join(",") };
+    const data = await this._fetch("/api/v1/friendships/show_many/", {
+      qs,
+      json: true,
+    });
+    return data?.friendship_statuses || {};
+  }
+
   // ---------- FEED ----------
   async lastMediaIdFromUserId(userId, username) {
     // Versão GraphQL

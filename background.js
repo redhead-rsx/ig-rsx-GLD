@@ -19,6 +19,7 @@ const q = {
   nextActionAt: null,
   backoffStep: 0,
 };
+const summary = { processed: 0, success: 0, failed: 0, skipped: 0 };
 let activeTabId = null;
 
 function log(...args) {
@@ -53,6 +54,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         likeCount: likeCount || 0,
         cfg: { ...DEFAULT_CFG, ...(cfg || {}) },
       };
+      Object.assign(summary, { processed: 0, success: 0, failed: 0, skipped: 0 });
       scheduleNext(0);
       sendResponse({ ok: true });
     });
@@ -140,14 +142,9 @@ async function execWithTimeout(item) {
         userId: item.id,
         username: item.username,
       });
-      postToPanel({
-        type: 'ROW_UPDATE',
-        index: q.idx,
-        id: item.id,
-        status: { followed: !!res?.ok, error: res?.ok ? undefined : res?.error },
-      });
-      if (!res?.ok) throw new Error(res.error || 'follow_failed');
-      lastStatus.followed = true;
+      if (!res?.ok || !res.data?.ok)
+        throw new Error(res?.data?.error || res?.error || 'follow_failed');
+      if (res.data?.result) lastStatus.result = res.data.result;
     }
     if (state.mode === 'follow_like') {
       const totalLikes = state.likeCount || 0;
@@ -163,11 +160,12 @@ async function execWithTimeout(item) {
           status: {
             likesTotal: totalLikes,
             likesDone: i + 1,
-            error: r?.ok ? undefined : r?.error,
+            error: r?.ok && r.data?.ok ? undefined : r?.data?.error || r?.error,
           },
         });
-        if (!r?.ok) throw new Error(r.error || 'like_failed');
-        lastStatus = { likesTotal: totalLikes, likesDone: i + 1 };
+        if (!r?.ok || !r.data?.ok)
+          throw new Error(r?.data?.error || r?.error || 'like_failed');
+        lastStatus = { ...lastStatus, likesTotal: totalLikes, likesDone: i + 1 };
       }
     }
     if (state.mode === 'unfollow') {
@@ -175,13 +173,8 @@ async function execWithTimeout(item) {
         userId: item.id,
         username: item.username,
       });
-      postToPanel({
-        type: 'ROW_UPDATE',
-        index: q.idx,
-        id: item.id,
-        status: { unfollowed: !!r?.ok, error: r?.ok ? undefined : r?.error },
-      });
-      if (!r?.ok) throw new Error(r.error || 'unfollow_failed');
+      if (!r?.ok || r.data?.status !== 'ok')
+        throw new Error(r?.error || 'unfollow_failed');
       lastStatus.unfollowed = true;
     }
     resetBackoff();
@@ -198,6 +191,22 @@ function handleResult(resp) {
   const status = resp.status || (resp.ok ? {} : { error: resp.error });
   postToPanel({ type: 'ROW_UPDATE', index: q.idx, id: item.id, status });
   q.processed++;
+  summary.processed = q.processed;
+  if (status.result === 'already_following' || status.skip_reason === 'already_following') {
+    summary.skipped++;
+  } else if (resp.ok) {
+    summary.success++;
+  } else {
+    summary.failed++;
+  }
+  chrome.runtime.sendMessage({
+    type: 'QUEUE_SUMMARY',
+    processed: summary.processed,
+    success: summary.success,
+    failed: summary.failed,
+    skipped: summary.skipped,
+    total: q.total,
+  });
   q.idx++;
   if (q.idx >= q.total) {
     finishQueue();
@@ -222,6 +231,14 @@ function finishQueue() {
   q.nextActionAt = null;
   emitTick();
   postToPanel({ type: 'QUEUE_DONE', processed: q.processed, total: q.total });
+  chrome.runtime.sendMessage({
+    type: 'QUEUE_SUMMARY',
+    processed: summary.processed,
+    success: summary.success,
+    failed: summary.failed,
+    skipped: summary.skipped,
+    total: q.total,
+  });
   q.isRunning = false;
 }
 
