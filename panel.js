@@ -4,6 +4,7 @@ const DEFAULT_CFG = {
   pageSize: 10,
   likePerProfile: 1,
   actionModeDefault: 'follow_like',
+  includeAlreadyFollowing: false,
 };
 let cfg = { ...DEFAULT_CFG };
 let followers = [];
@@ -77,11 +78,19 @@ function init() {
   bindTabs();
   qs('#btnLoadFollowers').addEventListener('click', () => {
     const limit = parseInt(qs('#limit').value, 10) || 0;
-    send({ type: 'LOAD_FOLLOWERS', limit });
+    send({
+      type: 'LOAD_FOLLOWERS',
+      limit,
+      includeAlreadyFollowing: cfg.includeAlreadyFollowing,
+    });
   });
   qs('#btnLoadFollowing').addEventListener('click', () => {
     const limit = parseInt(qs('#limit').value, 10) || 0;
-    send({ type: 'LOAD_FOLLOWING', limit });
+    send({
+      type: 'LOAD_FOLLOWING',
+      limit,
+      includeAlreadyFollowing: cfg.includeAlreadyFollowing,
+    });
   });
   qs('#btnProcess').addEventListener('click', () => {
     toggleMenu('#processMenu');
@@ -154,7 +163,9 @@ function toggleMenu(sel) {
 function startProcessing() {
   if (!followers.length || running) return;
   const selected = followers.filter((f) => f.checked);
-  const list = selected.length ? selected : followers;
+  const list = (selected.length ? selected : followers).filter(
+    (f) => !(f.status && f.status.skip_reason)
+  );
   const targets = list.map((u) => ({ id: u.id, username: u.username }));
   const mode = document.querySelector('input[name="actionMode"]:checked').value;
   const likeCount = parseInt(qs('#likeCount').value, 10) || 0;
@@ -227,7 +238,9 @@ function renderStatus(st) {
   if (st.error) return `<span class="badge error">${st.error}</span>`;
   if (st.likesTotal)
     return `<span class="badge wait">Likes: ${st.likesDone || 0}/${st.likesTotal}</span>`;
-  if (st.followed || st.unfollowed)
+  if (st.result === 'already_following' || st.skip_reason === 'already_following')
+    return '<span class="badge wait">Já seguia</span>';
+  if (st.result === 'followed' || st.followed || st.unfollowed)
     return '<span class="badge success">Seguido</span>';
   return '';
 }
@@ -268,6 +281,7 @@ function getCurrentCfg() {
       +qs('#cfgLikePerProfile').value || cfg.likePerProfile || DEFAULT_CFG.likePerProfile,
     actionModeDefault:
       qs('#cfgMode').value || cfg.actionModeDefault || DEFAULT_CFG.actionModeDefault,
+    includeAlreadyFollowing: qs('#cfgIncludeAlreadyFollowing').checked,
   };
 }
 
@@ -284,6 +298,7 @@ function saveCfgFromInputs() {
   qs('#modeFollow').checked = cfg.actionModeDefault === 'follow';
   qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
   qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
+  qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
   pageSize = cfg.pageSize;
   renderTable();
   updatePager();
@@ -302,6 +317,7 @@ function loadCfg() {
     qs('#modeFollow').checked = cfg.actionModeDefault === 'follow';
     qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
     qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
+    qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
     pageSize = cfg.pageSize;
     qs('#pageSize').value = String(pageSize);
     handleLikeInput();
