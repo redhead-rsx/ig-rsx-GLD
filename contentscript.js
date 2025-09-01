@@ -26,57 +26,47 @@ chrome.runtime.sendMessage({ type: 'PING_SW' }, (resp) => {
 if (window.__IG_CS_TASK_HANDLER) {
   window.removeEventListener('message', window.__IG_CS_TASK_HANDLER);
 }
-window.__IG_CS_TASK_HANDLER = (ev) => {
-  const d = ev.data;
-  if (!d || d.__BOT__ || !d.type) return;
-  if (d.type === 'TASK_RESULT' && d.requestId && _pending[d.requestId]) {
-    try {
-      _pending[d.requestId](d);
-    } finally {
-      delete _pending[d.requestId];
+  window.__IG_CS_TASK_HANDLER = (ev) => {
+    const d = ev.data;
+    if (!d || d.__BOT__ || !d.type) return;
+    if (d.type === 'TASK_RESULT' && d.requestId && _pending[d.requestId]) {
+      try {
+        _pending[d.requestId](d);
+      } finally {
+        delete _pending[d.requestId];
+      }
     }
-  }
-};
-window.addEventListener('message', window.__IG_CS_TASK_HANDLER);
+  };
+  window.addEventListener('message', window.__IG_CS_TASK_HANDLER);
 
-if (window.__RSX_CS_ONMSG) {
-  chrome.runtime.onMessage.removeListener(window.__RSX_CS_ONMSG);
-}
-window.__RSX_CS_ONMSG = (msg, sender, sendResponse) => {
-  if (msg?.type === 'PING_CS') {
-    return sendResponse({ ok: true, from: 'cs' });
-  }
-  if (msg.type === 'OPEN_PANEL') {
-    openPanel();
-  } else if (msg.type === 'EXEC_TASK') {
-    const id = Date.now() + '_' + Math.random().toString(36).slice(2);
-    _pending[id] = sendResponse;
-    window.postMessage(
-      {
-        __BOT__: true,
-        type: 'TASK',
-        requestId: id,
-        action: msg.action,
-        payload: msg.payload,
-      },
-      '*',
-    );
-    return true;
-  }
-
-  if (
-    [
-      'ROW_UPDATE',
-      'QUEUE_TICK',
-      'QUEUE_DONE',
-      'QUEUE_SUMMARY',
-      'FOLLOWERS_LOADED',
-    ].includes(msg.type)
-  ) {
-    window.postMessage({ __RSX__: true, ...msg }, '*');
-  }
-};
-chrome.runtime.onMessage.addListener(window.__RSX_CS_ONMSG);
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === 'PING_CS') {
+      return sendResponse({ ok: true, from: 'cs' });
+    }
+    if (msg.type === 'OPEN_PANEL') {
+      openPanel();
+    } else if (msg.type === 'EXEC_TASK') {
+      const id = Date.now() + '_' + Math.random().toString(36).slice(2);
+      _pending[id] = sendResponse;
+      window.postMessage(
+        {
+          __BOT__: true,
+          type: 'TASK',
+          requestId: id,
+          action: msg.action,
+          payload: msg.payload,
+        },
+        '*',
+      );
+      return true;
+    } else if (
+      ['ROW_UPDATE', 'QUEUE_TICK', 'QUEUE_DONE', 'FOLLOWERS_LOADED'].includes(
+        msg.type,
+      )
+    ) {
+      window.postMessage(msg, '*');
+    }
+  });
 
 async function openPanel() {
   const old = document.getElementById("ig-panel-root");

@@ -231,7 +231,6 @@ function finishQueue() {
   q.nextActionAt = null;
   emitTick();
   postToPanel({ type: 'QUEUE_DONE', processed: q.processed, total: q.total });
-  chrome.runtime.sendMessage({ type: 'QUEUE_DONE' });
   chrome.runtime.sendMessage({
     type: 'QUEUE_SUMMARY',
     processed: summary.processed,
