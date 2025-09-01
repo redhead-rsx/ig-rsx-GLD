@@ -20,7 +20,10 @@ function qs(sel) {
   return document.querySelector(sel);
 }
 
-window.addEventListener('message', (ev) => {
+if (window.__IG_PANEL_MSG_HANDLER) {
+  window.removeEventListener('message', window.__IG_PANEL_MSG_HANDLER);
+}
+window.__IG_PANEL_MSG_HANDLER = (ev) => {
   const msg = ev.data || {};
   if (msg.type === 'PANEL_READY') {
     init();
@@ -49,7 +52,8 @@ window.addEventListener('message', (ev) => {
     qs('#progressHud').classList.add('hidden');
     updateRunButtons();
   }
-});
+};
+window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
 
 function init() {
   bindTabs();

@@ -38,7 +38,17 @@ function stop() {
 
 function execTask(tabId, task) {
   return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        resolve({ ok: false, error: 'no_response' });
+      }
+    }, 10000);
     chrome.tabs.sendMessage(tabId, { type: 'EXEC_TASK', task }, (res) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
       if (chrome.runtime.lastError) {
         resolve({ ok: false, error: chrome.runtime.lastError.message });
       } else {

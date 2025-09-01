@@ -8,10 +8,17 @@
   }
 })();
 
-chrome.runtime.onMessage.addListener(async (msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "OPEN_PANEL") {
-    await openPanel();
-  } else if (["ROW_UPDATE", "PROGRESS", "STOPPED", "FOLLOWERS_LOADED"].includes(msg.type)) {
+    openPanel();
+  } else if (msg.type === "EXEC_TASK") {
+    execTask(msg.task).then((payload) => {
+      sendResponse(payload);
+    });
+    return true;
+  } else if (
+    ["ROW_UPDATE", "PROGRESS", "STOPPED", "FOLLOWERS_LOADED"].includes(msg.type)
+  ) {
     window.postMessage(msg, "*");
   }
 });
@@ -49,14 +56,19 @@ async function openPanel() {
 
 function execTask(task) {
   return new Promise((resolve) => {
-    window.postMessage({ __BOT__: true, type: "TASK", task }, "*");
+    const timeout = setTimeout(() => {
+      window.removeEventListener("message", onMsg);
+      resolve({ ok: false, error: "no_response" });
+    }, 10000);
     function onMsg(ev) {
       if (ev.data?.__BOT__ && ev.data.type === "TASK_RESULT") {
+        clearTimeout(timeout);
         window.removeEventListener("message", onMsg);
         resolve(ev.data.payload);
       }
     }
     window.addEventListener("message", onMsg);
+    window.postMessage({ __BOT__: true, type: "TASK", task }, "*");
   });
 }
 
