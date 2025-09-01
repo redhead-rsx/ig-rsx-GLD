@@ -256,7 +256,10 @@ function handleLikeInput() {
 
 function getCurrentCfg() {
   return {
-    baseDelayMs: +qs('#cfgDelayMs').value || cfg.baseDelayMs || DEFAULT_CFG.baseDelayMs,
+    baseDelayMs:
+      (parseInt(qs('#cfgDelaySec').value, 10) * 1000) ||
+      cfg.baseDelayMs ||
+      DEFAULT_CFG.baseDelayMs,
     jitterPct: +qs('#cfgJitterPct').value || cfg.jitterPct || DEFAULT_CFG.jitterPct,
     pageSize: cfg.pageSize || DEFAULT_CFG.pageSize,
     likePerProfile:
@@ -272,7 +275,7 @@ function saveCfgFromInputs() {
   qs('#likeCount').value = String(cfg.likePerProfile);
   qs('#cfgPageSize').value = cfg.pageSize;
   qs('#pageSize').value = String(cfg.pageSize);
-  qs('#cfgDelayMs').value = cfg.baseDelayMs;
+  qs('#cfgDelaySec').value = Math.floor(cfg.baseDelayMs / 1000);
   qs('#cfgJitterPct').value = cfg.jitterPct;
   qs('#cfgLikePerProfile').value = cfg.likePerProfile;
   qs('#cfgMode').value = cfg.actionModeDefault;
@@ -288,7 +291,7 @@ function saveCfgFromInputs() {
 function loadCfg() {
   chrome.storage.local.get(DEFAULT_CFG, (st) => {
     cfg = { ...DEFAULT_CFG, ...st };
-    qs('#cfgDelayMs').value = cfg.baseDelayMs;
+    qs('#cfgDelaySec').value = Math.floor(cfg.baseDelayMs / 1000);
     qs('#cfgJitterPct').value = cfg.jitterPct;
     qs('#cfgPageSize').value = cfg.pageSize;
     qs('#cfgLikePerProfile').value = cfg.likePerProfile;
