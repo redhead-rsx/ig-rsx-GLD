@@ -235,6 +235,24 @@ export class IGClient {
     return res;
   }
 
+  async getFriendshipStatusSingle(userId, opts = {}) {
+    const id = String(userId).trim();
+    const now = Date.now();
+    const cached = this._relCache.get(id);
+    if (!opts.forceFresh && cached && now - cached.ts < this._relTtlMs) {
+      return { following: !!cached.following, followed_by: !!cached.followed_by };
+    }
+    try {
+      const data = await this._fetch(`/api/v1/friendships/show/${id}/`);
+      const r = data?.friendship_status || data || {};
+      const entry = { following: !!r.following, followed_by: !!r.followed_by };
+      this._relCache.set(id, { ...entry, ts: Date.now() });
+      return entry;
+    } catch {
+      return null;
+    }
+  }
+
   // ---------- FEED ----------
   async lastMediaIdFromUserId(userId, username) {
     // Versão GraphQL

@@ -298,8 +298,11 @@ async function execWithTimeout(item) {
         userId: item.id,
         username: item.username,
       });
-      status.followed = !!res?.ok;
       if (!res?.ok) throw new Error(res?.error || 'follow_failed');
+      status.followed = res.data?.result !== 'already_following';
+      if (res.data?.result === 'already_following') {
+        status.alreadyFollowing = true;
+      }
     }
     if (q.mode === 'follow_like') {
       const totalLikes = q.likeCount || 0;

@@ -138,6 +138,8 @@ async function loadUsers(limit, mode) {
   );
   const includeAlreadyFollowing = !!cfg.includeAlreadyFollowing;
   log(`[collect] start ${mode} target ${limit}`);
+  // bootstrap follow index early
+  execTask('FOLLOW_INDEX_INIT', {}).catch(() => {});
   const lookup = await execTask("LOOKUP", { username }).catch((e) => {
     console.error('[cs]', '[collect] lookup failed', e);
     return null;
@@ -148,6 +150,7 @@ async function loadUsers(limit, mode) {
   let items = [];
   let cursor = null;
   let removedAlreadyFollowing = 0;
+  let batchIdx = 0;
   while (items.length < limit) {
     const res = await execTask(
       mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
@@ -156,48 +159,69 @@ async function loadUsers(limit, mode) {
       console.error('[cs]', '[collect] page failed', e);
       return null;
     });
-    const batch = res?.data?.users || [];
-    if (!batch.length) break;
-    const fresh = [];
-    for (const u of batch) {
+    const rawBatch = res?.data?.users || [];
+    if (!rawBatch.length) break;
+    batchIdx++;
+    const unique = [];
+    for (const u of rawBatch) {
       if (!seen.has(u.id)) {
         seen.add(u.id);
-        fresh.push({ id: u.id, username: u.username });
+        unique.push({ id: u.id, username: u.username });
       }
     }
+    const chk = await execTask('FOLLOW_INDEX_CHECK', {
+      ids: unique.map((u) => u.id),
+    }).catch(() => ({ data: { ids: [] } }));
+    const idxSet = new Set(chk.data?.ids || []);
+    const keptPhase1 = unique.filter((u) => !idxSet.has(u.id));
+    let removedIdx = unique.length - keptPhase1.length;
     let rel = {};
-    if (fresh.length) {
+    if (keptPhase1.length) {
       rel = (
         await execTask('FRIENDSHIP_STATUS_BULK', {
-          ids: fresh.map((u) => u.id),
+          ids: keptPhase1.map((u) => u.id),
         }).catch(() => ({ data: {} }))
       ).data || {};
     }
-    for (const u of fresh) {
+    const kept = [];
+    let removedBulk = 0;
+    for (const u of keptPhase1) {
       const r = rel[u.id] || { following: false, followed_by: false };
       u.rel = r;
       if (!includeAlreadyFollowing && r.following) {
-        removedAlreadyFollowing++;
+        removedBulk++;
         continue;
       }
-      items.push(u);
-      if (items.length >= limit) break;
+      kept.push(u);
+      if (items.length + kept.length >= limit) break;
     }
-    log(
-      `[collect] progress: fetched=${items.length} totalTarget=${limit}`,
+    items.push(...kept);
+    removedAlreadyFollowing += removedIdx + removedBulk;
+    console.debug(
+      `[filter] idx=%d raw=%d dedup=%d p1RemovedByIndex=%d p2RemovedByBulk=%d kept=%d total=%d/%d`,
+      batchIdx,
+      rawBatch.length,
+      unique.length,
+      removedIdx,
+      removedBulk,
+      kept.length,
+      items.length,
+      limit,
     );
     window.postMessage(
       {
         type: 'COLLECT_PROGRESS',
-        fetched: items.length,
-        totalTarget: limit,
-        deduped: seen.size,
+        batchRaw: rawBatch.length,
+        batchDedup: unique.length,
         removedAlreadyFollowing,
+        total: items.length,
+        target: limit,
       },
       '*',
     );
     cursor = res?.data?.nextCursor || res?.data?.cursor;
     if (!cursor) break;
+    if (items.length >= limit) break;
   }
   items = items.slice(0, limit);
   return { items, total: items.length, removedAlreadyFollowing };
