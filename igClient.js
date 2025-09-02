@@ -154,13 +154,14 @@ export class IGClient {
     };
   }
 
-  async getFriendshipStatusBulk(userIds = []) {
+  async getFriendshipStatusBulk(userIds = [], opts = {}) {
+    const { forceFresh = false } = opts;
     const res = {};
     const now = Date.now();
     const toQuery = [];
     for (const id of userIds) {
       const cached = this._relCache.get(id);
-      if (cached && now - cached.ts < this._relTtlMs) {
+      if (!forceFresh && cached && now - cached.ts < this._relTtlMs) {
         res[id] = {
           following: !!cached.following,
           followed_by: !!cached.followed_by,

@@ -60,9 +60,13 @@ if (window.__IG_CS_TASK_HANDLER) {
       );
       return true;
     } else if (
-      ['ROW_UPDATE', 'QUEUE_TICK', 'QUEUE_DONE', 'FOLLOWERS_LOADED'].includes(
-        msg.type,
-      )
+      [
+        'ROW_UPDATE',
+        'QUEUE_TICK',
+        'QUEUE_DONE',
+        'FOLLOWERS_LOADED',
+        'PRECHECK_REMOVED',
+      ].includes(msg.type)
     ) {
       window.postMessage(msg, '*');
     }
