@@ -164,12 +164,21 @@ export class IGRunner {
 
   async execute(task) {
     switch (task.kind) {
-      case "FOLLOW":
-        return await this.followWithGuard(task.userId, task.username);
-      case "UNFOLLOW":
-        return await this.ig.unfollow(task.userId);
+      case "FOLLOW": {
+        const id = String(task.userId || '').trim();
+        const username = String(task.username || '').trim().toLowerCase();
+        if (!id) return { ok: false, result: 'invalid_id', error: 'user_id_missing' };
+        return await this.followWithGuard(id, username);
+      }
+      case "UNFOLLOW": {
+        const id = String(task.userId || '').trim();
+        if (!id) return { ok: false, result: 'invalid_id', error: 'user_id_missing' };
+        return await this.ig.unfollow(id);
+      }
       case "LIKE": {
-        const { username } = task;
+        const username = String(task.username || '').trim().toLowerCase();
+        if (!username)
+          return { ok: false, result: 'invalid_id', error: 'user_id_missing' };
         const mediaId = await getFirstLikeableMediaId(username);
         await likeMedia(mediaId);
         return { ok: true };

@@ -24,6 +24,8 @@
         "injected.js",
         "igClient.js",
         "runner.js",
+        "followIndex.js",
+        "util.js",
         "panel.html",
         "panel.js",
         "panel.css"

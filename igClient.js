@@ -1,4 +1,5 @@
 // src/igClient.js
+import { normUser } from './util.js';
 export function csrfFromCookie() {
   const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";
@@ -123,9 +124,10 @@ export class IGClient {
     };
     const data = await this._fetch("/graphql/query/", { qs, json: true });
     const cont = data?.data?.user?.edge_followed_by;
+    const users =
+      cont?.edges?.map((e) => normUser(e?.node))?.filter((u) => u.id) || [];
     return {
-      users:
-        cont?.edges?.map((e) => ({ id: e.node.id, username: e.node.username })) || [],
+      users,
       nextCursor: cont?.page_info?.has_next_page
         ? cont.page_info.end_cursor
         : null,
@@ -145,9 +147,10 @@ export class IGClient {
     };
     const data = await this._fetch("/graphql/query/", { qs, json: true });
     const cont = data?.data?.user?.edge_follow;
+    const users =
+      cont?.edges?.map((e) => normUser(e?.node))?.filter((u) => u.id) || [];
     return {
-      users:
-        cont?.edges?.map((e) => ({ id: e.node.id, username: e.node.username })) || [],
+      users,
       nextCursor: cont?.page_info?.has_next_page
         ? cont.page_info.end_cursor
         : null,
