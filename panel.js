@@ -83,7 +83,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     updateRunButtons();
   } else if (msg.type === 'COLLECT_PROGRESS') {
     totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
-    qs('#collectProgress').textContent = `Coletados ${msg.fetched}/${msg.totalTarget} (removidos ${totalRemovedAlreadyFollowing} já seguidos)`;
+    qs('#collectProgress').textContent = `Coletados ${msg.total}/${msg.target} (removidos ${totalRemovedAlreadyFollowing} já seguidos)`;
   }
 };
 window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
@@ -240,6 +240,8 @@ function renderStatus(f) {
   if (f.rel?.following) return '<span class="badge info">Já seguia</span>';
   if (st?.removedAlreadyFollowing)
     return '<span class="badge info">Já seguia (removido)</span>';
+  if (st?.alreadyFollowing || st?.result === 'already_following')
+    return '<span class="badge info">Já seguia</span>';
   if (!st) return '';
   if (st.error) return `<span class="badge error">${st.error}</span>`;
   if (st.likesTotal)
