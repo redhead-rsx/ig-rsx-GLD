@@ -5,72 +5,125 @@ const DEFAULT_CFG = {
   likePerProfile: 1,
   actionModeDefault: 'follow_like',
 };
-let queue = [];
-let running = false;
-let processed = 0;
-let timer = null;
-let total = 0;
-let state = { mode: 'follow', likeCount: 0, cfg: { ...DEFAULT_CFG } };
-let cachedCfg = { ...DEFAULT_CFG };
-let nextActionAt = null;
-let activeTabId = null;
-let lock = false;
+
+// Central queue state (source of truth)
+const q = {
+  items: [],
+  idx: 0,
+  total: 0,
+  processed: 0,
+  isRunning: false,
+  paused: false,
+  phase: 'idle', // 'waiting'|'executing'|'backoff'|'paused'|'done'
+  nextActionAt: null,
+  timerId: null,
+  // extra state
+  mode: 'follow',
+  likeCount: 0,
+  cfg: { ...DEFAULT_CFG },
+  tabId: null,
+};
+
 let backoffStep = 0;
+let cachedCfg = { ...DEFAULT_CFG };
 
 function log(...args) {
   console.debug('[bg]', ...args);
 }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === 'PING_SW') {
-    sendResponse({ ok: true, from: 'sw' });
-  } else if (msg.type === 'START_QUEUE') {
-    if (running) return sendResponse({ ok: false, error: 'already_running' });
-    const { mode, likeCount, targets, cfg } = msg;
-    if (!['follow', 'follow_like', 'unfollow'].includes(mode))
-      return sendResponse({ ok: false, error: 'invalid_mode' });
-    if (!Array.isArray(targets) || !targets.length)
-      return sendResponse({ ok: false, error: 'invalid_targets' });
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      activeTabId = tabs[0]?.id || null;
-      if (!activeTabId) {
-        return sendResponse({ ok: false, error: 'no_tab' });
-      }
-      queue = targets.slice();
-      processed = 0;
-      total = queue.length;
-      state = {
-        mode,
-        likeCount: likeCount || 0,
-        cfg: { ...DEFAULT_CFG, ...(cfg || {}) },
-      };
-      running = true;
-      backoffStep = 0;
-      log('start', queue.length, mode);
-      scheduleNext(0, 'waiting', { nextDelayMs: 0 });
-      sendResponse({ ok: true });
-    });
-    return true;
-  } else if (msg.type === 'STOP_QUEUE') {
-    stop();
-    sendResponse({ ok: true });
-  } else if (msg.type === 'CFG_UPDATED') {
-    cachedCfg = { ...cachedCfg, ...(msg.cfg || {}) };
-    sendResponse({ ok: true });
-  }
-});
+function postToPanel(message) {
+  if (!q.tabId) return;
+  chrome.tabs.sendMessage(q.tabId, message);
+}
 
-function stop() {
-  running = false;
-  queue = [];
-  if (timer) {
-    clearTimeout(timer);
-    timer = null;
+function emitTick(extra = {}) {
+  postToPanel({
+    type: 'QUEUE_TICK',
+    processed: q.processed,
+    total: q.total,
+    phase: q.phase,
+    nextActionAt: q.nextActionAt,
+    ...extra,
+  });
+}
+
+function computeNextDelayMs() {
+  const base = parseInt(q.cfg.baseDelayMs, 10) || 0;
+  const jitterPct = parseInt(q.cfg.jitterPct, 10) || 0;
+  const jitter = ((base * jitterPct) / 100) * (Math.random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
+}
+
+function scheduleNext(waitMs) {
+  // units already in ms
+  if (q.paused) return;
+  q.phase = 'waiting';
+  q.nextActionAt = Date.now() + waitMs;
+  if (q.timerId) clearTimeout(q.timerId);
+  emitTick({ nextDelayMs: waitMs });
+  log(`scheduleNext waitMs=${waitMs} nextAt=${q.nextActionAt}`);
+  q.timerId = setTimeout(startAction, waitMs);
+}
+
+async function startAction() {
+  if (q.paused) return;
+  if (q.idx >= q.total) return finishQueue();
+
+  q.phase = 'executing';
+  emitTick();
+  log(`startAction idx=${q.idx}/total=${q.total} phase=executing`);
+
+  const item = q.items[q.idx];
+  const resp = await execWithTimeout(item);
+
+  // Resultado sempre processado
+  postToPanel({ type: 'ROW_UPDATE', id: item.id, status: resp.status });
+  log(`result idx=${q.idx} ok=${!resp.status.error} backoffMs=${resp.backoffMs || 0}`);
+
+  q.processed++;
+  q.idx++;
+
+  if (q.idx >= q.total) return finishQueue();
+
+  if (resp && resp.backoffMs) {
+    q.phase = 'backoff';
+    const ms = Math.max(0, resp.backoffMs);
+    q.nextActionAt = Date.now() + ms;
+    if (q.timerId) clearTimeout(q.timerId);
+    emitTick({ backoffMs: ms });
+    log(`scheduleNext(backoff) waitMs=${ms} nextAt=${q.nextActionAt}`);
+    q.timerId = setTimeout(() => scheduleNext(computeNextDelayMs()), ms);
+  } else {
+    scheduleNext(computeNextDelayMs());
   }
-  nextActionAt = null;
-  lock = false;
-  backoffStep = 0;
-  emitTick('paused');
+}
+
+function finishQueue() {
+  q.isRunning = false;
+  q.phase = 'done';
+  if (q.timerId) {
+    clearTimeout(q.timerId);
+    q.timerId = null;
+  }
+  q.nextActionAt = null;
+  emitTick();
+  postToPanel({ type: 'QUEUE_DONE', processed: q.processed, total: q.total });
+}
+
+function stopQueue() {
+  q.isRunning = false;
+  q.paused = false;
+  q.phase = 'paused';
+  q.items = [];
+  q.idx = 0;
+  q.total = 0;
+  q.processed = 0;
+  if (q.timerId) {
+    clearTimeout(q.timerId);
+    q.timerId = null;
+  }
+  q.nextActionAt = null;
+  emitTick();
 }
 
 function sendToTab(tabId, message, timeoutMs = 5000) {
@@ -102,95 +155,60 @@ async function execCommand(tabId, action, payload) {
   log('exec', action, payload);
   return sendToTab(tabId, { type: 'EXEC_TASK', action, payload });
 }
-async function runNext() {
-  if (!running || lock) return;
-  if (!queue.length) {
-    finish();
-    return;
-  }
-  lock = true;
-  const item = queue.shift();
-  emitTick('executing', { current: { id: item.id, username: item.username } });
+
+async function execWithTimeout(item) {
+  const status = {};
   let transient = false;
   try {
-    if (state.mode === 'follow' || state.mode === 'follow_like') {
-      const res = await execCommand(activeTabId, 'FOLLOW', {
+    if (q.mode === 'follow' || q.mode === 'follow_like') {
+      const res = await execCommand(q.tabId, 'FOLLOW', {
         userId: item.id,
         username: item.username,
       });
-      chrome.tabs.sendMessage(activeTabId, {
-        type: 'ROW_UPDATE',
-        id: item.id,
-        status: { followed: !!res?.ok, error: res?.ok ? undefined : res?.error },
-      });
-      if (!res?.ok) throw new Error(res.error || 'follow_failed');
+      status.followed = !!res?.ok;
+      if (!res?.ok) throw new Error(res?.error || 'follow_failed');
     }
-    if (state.mode === 'follow_like') {
-      const totalLikes = state.likeCount || 0;
+    if (q.mode === 'follow_like') {
+      const totalLikes = q.likeCount || 0;
       for (let i = 0; i < totalLikes; i++) {
-        const r = await execCommand(activeTabId, 'LIKE', {
+        const r = await execCommand(q.tabId, 'LIKE', {
           userId: item.id,
           username: item.username,
         });
-        chrome.tabs.sendMessage(activeTabId, {
-          type: 'ROW_UPDATE',
-          id: item.id,
-          status: {
-            likesTotal: totalLikes,
-            likesDone: i + 1,
-            error: r?.ok ? undefined : r?.error,
-          },
-        });
-        if (!r?.ok) throw new Error(r.error || 'like_failed');
+        status.likesTotal = totalLikes;
+        status.likesDone = i + 1;
+        if (!r?.ok) throw new Error(r?.error || 'like_failed');
       }
     }
-    if (state.mode === 'unfollow') {
-      const r = await execCommand(activeTabId, 'UNFOLLOW', {
+    if (q.mode === 'unfollow') {
+      const r = await execCommand(q.tabId, 'UNFOLLOW', {
         userId: item.id,
         username: item.username,
       });
-      chrome.tabs.sendMessage(activeTabId, {
-        type: 'ROW_UPDATE',
-        id: item.id,
-        status: { unfollowed: !!r?.ok, error: r?.ok ? undefined : r?.error },
-      });
-      if (!r?.ok) throw new Error(r.error || 'unfollow_failed');
+      status.unfollowed = !!r?.ok;
+      if (!r?.ok) throw new Error(r?.error || 'unfollow_failed');
     }
     resetBackoff();
   } catch (e) {
     const err = String(e.message || e);
-    chrome.tabs.sendMessage(activeTabId, {
-      type: 'ROW_UPDATE',
-      id: item.id,
-      status: { error: err },
-    });
+    status.error = err;
     transient = isTransientError(err);
   }
-  processed++;
-  lock = false;
-  if (!running) return;
-  if (queue.length === 0) {
-    finish();
-    return;
+
+  let backoffMs = null;
+  if (status.error && transient) {
+    backoffMs = calcBackoff();
   }
-  if (transient) {
-    const backoffMs = calcBackoff();
-    scheduleNext(backoffMs, 'backoff', { backoffMs });
-  } else {
-    const delay = nextDelay();
-    scheduleNext(delay, 'waiting', { nextDelayMs: delay });
-  }
+
+  return { status, backoffMs };
 }
 
-function nextDelay() {
-  const base = parseInt(state.cfg.baseDelayMs, 10) || 0;
-  const jitterPct = parseInt(state.cfg.jitterPct, 10) || 0;
-  const jitter = ((base * jitterPct) / 100) * (Math.random() * 2 - 1);
-  return Math.max(0, Math.round(base + jitter));
+function isTransientError(err) {
+  return /429|rate|timeout|temporarily/i.test(err);
 }
 
 function calcBackoff() {
-  const base = parseInt(state.cfg.baseDelayMs, 10) || 1000;
+  const base = parseInt(q.cfg.baseDelayMs, 10) || 1000;
   const ms = Math.min(60000, base * Math.pow(2, backoffStep));
   backoffStep++;
   return ms;
@@ -200,38 +218,53 @@ function resetBackoff() {
   backoffStep = 0;
 }
 
-function isTransientError(err) {
-  return /429|rate|timeout|temporarily/i.test(err);
-}
-
-function scheduleNext(delay, phase, extra = {}) {
-  if (timer) clearTimeout(timer);
-  nextActionAt = Date.now() + delay;
-  timer = setTimeout(runNext, delay);
-  emitTick(phase, { ...extra, nextActionAt });
-}
-
-function emitTick(phase, extra = {}) {
-  if (!activeTabId) return;
-  chrome.tabs.sendMessage(activeTabId, {
-    type: 'QUEUE_TICK',
-    processed,
-    total,
-    phase,
-    ...extra,
-  });
-}
-
-function finish() {
-  running = false;
-  timer = null;
-  nextActionAt = null;
-  emitTick('done');
-  if (activeTabId) {
-    chrome.tabs.sendMessage(activeTabId, {
-      type: 'QUEUE_DONE',
-      processed,
-      total,
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'PING_SW') {
+    sendResponse({ ok: true, from: 'sw' });
+  } else if (msg.type === 'START_QUEUE') {
+    if (q.isRunning) return sendResponse({ ok: false, error: 'already_running' });
+    const { mode, likeCount, targets, cfg } = msg;
+    if (!['follow', 'follow_like', 'unfollow'].includes(mode))
+      return sendResponse({ ok: false, error: 'invalid_mode' });
+    if (!Array.isArray(targets) || !targets.length)
+      return sendResponse({ ok: false, error: 'invalid_targets' });
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      q.tabId = tabs[0]?.id || null;
+      if (!q.tabId) return sendResponse({ ok: false, error: 'no_tab' });
+      q.items = targets.slice();
+      q.idx = 0;
+      q.total = q.items.length;
+      q.processed = 0;
+      q.isRunning = true;
+      q.paused = false;
+      q.phase = 'idle';
+      q.mode = mode;
+      q.likeCount = likeCount || 0;
+      q.cfg = { ...DEFAULT_CFG, ...(cfg || {}) };
+      backoffStep = 0;
+      log('start', q.total, mode);
+      scheduleNext(0);
+      sendResponse({ ok: true });
     });
+    return true;
+  } else if (msg.type === 'STOP_QUEUE') {
+    stopQueue();
+    sendResponse({ ok: true });
+  } else if (msg.type === 'CFG_UPDATED') {
+    cachedCfg = { ...cachedCfg, ...(msg.cfg || {}) };
+    sendResponse({ ok: true });
   }
-}
+});
+
+// Watchdog to recover from lost timers
+setInterval(() => {
+  if (q.isRunning && !q.paused && q.phase === 'waiting' && q.nextActionAt) {
+    const late = Date.now() - q.nextActionAt;
+    if (late >= 500) {
+      log(`watchdog fired (late by ${late}ms)`);
+      if (q.timerId) clearTimeout(q.timerId);
+      startAction();
+    }
+  }
+}, 1000);
+
