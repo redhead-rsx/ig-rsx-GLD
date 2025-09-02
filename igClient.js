@@ -125,7 +125,7 @@ export class IGClient {
     const data = await this._fetch("/graphql/query/", { qs, json: true });
     const cont = data?.data?.user?.edge_followed_by;
     const users =
-      cont?.edges?.map((e) => normUser(e?.node))?.filter((u) => u.id) || [];
+      cont?.edges?.map((e) => normUser(e?.node))?.filter((u) => u && u.id) || [];
     return {
       users,
       nextCursor: cont?.page_info?.has_next_page
@@ -148,7 +148,7 @@ export class IGClient {
     const data = await this._fetch("/graphql/query/", { qs, json: true });
     const cont = data?.data?.user?.edge_follow;
     const users =
-      cont?.edges?.map((e) => normUser(e?.node))?.filter((u) => u.id) || [];
+      cont?.edges?.map((e) => normUser(e?.node))?.filter((u) => u && u.id) || [];
     return {
       users,
       nextCursor: cont?.page_info?.has_next_page
