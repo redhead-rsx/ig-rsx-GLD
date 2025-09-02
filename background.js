@@ -238,6 +238,47 @@ function sendToTab(tabId, message, timeoutMs = 5000) {
   });
 }
 
+async function precheckWindow(tabId, items, windowSize = 50) {
+  const slice = items.slice(0, windowSize);
+  const ids = slice.map((it) => it.id);
+  if (!ids.length) return { items, removed: [] };
+  const resp = await execCommand(tabId, 'FRIENDSHIP_STATUS_BULK', {
+    ids,
+    forceFresh: true,
+  });
+  const rels = resp?.data || {};
+  const removedIds = new Set();
+  const kept = [];
+  for (const it of items) {
+    const r = rels[it.id];
+    if (r && r.following) {
+      removedIds.add(it.id);
+    } else {
+      kept.push(it);
+    }
+  }
+  if (removedIds.size) {
+    for (const id of removedIds) {
+      postToPanel({
+        type: 'ROW_UPDATE',
+        id,
+        status: { removedAlreadyFollowing: true },
+      });
+    }
+    postToPanel({
+      type: 'PRECHECK_REMOVED',
+      window: ids.length,
+      removed: removedIds.size,
+    });
+  }
+  console.debug(
+    '[collect] preExec window=%d removedAlreadyFollowing=%d',
+    ids.length,
+    removedIds.size,
+  );
+  return { items: kept, removed: Array.from(removedIds) };
+}
+
 async function execCommand(tabId, action, payload) {
   const ping = await sendToTab(tabId, { type: 'PING_CS' });
   if (!ping?.ok) {
@@ -320,10 +361,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return sendResponse({ ok: false, error: 'invalid_mode' });
     if (!Array.isArray(targets) || !targets.length)
       return sendResponse({ ok: false, error: 'invalid_targets' });
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       q.tabId = tabs[0]?.id || null;
       if (!q.tabId) return sendResponse({ ok: false, error: 'no_tab' });
-      q.items = targets.slice();
+      let items = targets.slice();
+      if (!cfg?.includeAlreadyFollowing) {
+        const pre = await precheckWindow(q.tabId, items);
+        items = pre.items;
+      }
+      q.items = items;
       q.idx = 0;
       q.total = q.items.length;
       q.processed = 0;

@@ -13,6 +13,7 @@ let pageSize = DEFAULT_CFG.pageSize;
 let running = false;
 let ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
 let ovTimer = null;
+let totalRemovedAlreadyFollowing = 0;
 
 function send(msg) {
   window.postMessage({ from: 'ig-panel', ...msg }, '*');
@@ -36,17 +37,19 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     }
     followers = msg.items || [];
     page = 1;
+    totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
     renderTable();
     updatePager();
-    if (typeof msg.removedAlreadyFollowing === 'number') {
-      qs('#collectProgress').textContent = `Coletados ${followers.length}/${msg.total} (removidos ${msg.removedAlreadyFollowing} já seguidos)`;
-    }
+    updateCollectProgress();
   } else if (msg.type === 'ROW_UPDATE') {
     const row = followers.find((f) => f.id === msg.id);
     if (row) {
       row.status = { ...(row.status || {}), ...msg.status };
       renderTable();
     }
+  } else if (msg.type === 'PRECHECK_REMOVED') {
+    totalRemovedAlreadyFollowing += msg.removed || 0;
+    updateCollectProgress();
   } else if (msg.type === 'QUEUE_TICK') {
     ov.processed = msg.processed || 0;
     ov.total = msg.total || 0;
@@ -79,7 +82,8 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     tickOverlay();
     updateRunButtons();
   } else if (msg.type === 'COLLECT_PROGRESS') {
-    qs('#collectProgress').textContent = `Coletados ${msg.fetched}/${msg.totalTarget} (removidos ${msg.removedAlreadyFollowing || 0} já seguidos)`;
+    totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
+    qs('#collectProgress').textContent = `Coletados ${msg.fetched}/${msg.totalTarget} (removidos ${totalRemovedAlreadyFollowing} já seguidos)`;
   }
 };
 window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
@@ -87,6 +91,10 @@ window.__IG_PANEL_CLEANUP = () => {
   window.removeEventListener('message', window.__IG_PANEL_MSG_HANDLER);
   window.__IG_PANEL_MSG_HANDLER = null;
 };
+
+function updateCollectProgress() {
+  qs('#collectProgress').textContent = `Coletados ${followers.length}/${followers.length + totalRemovedAlreadyFollowing} (removidos ${totalRemovedAlreadyFollowing} já seguidos)`;
+}
 
 function init() {
   bindTabs();
@@ -230,6 +238,8 @@ function renderStatus(f) {
   const st = f.status;
   if (f.rel?.rel_unknown) return '<span class="badge wait">?</span>';
   if (f.rel?.following) return '<span class="badge info">Já seguia</span>';
+  if (st?.removedAlreadyFollowing)
+    return '<span class="badge info">Já seguia (removido)</span>';
   if (!st) return '';
   if (st.error) return `<span class="badge error">${st.error}</span>`;
   if (st.likesTotal)
