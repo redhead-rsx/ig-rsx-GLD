@@ -164,25 +164,7 @@ export class IGRunner {
   async execute(task) {
     switch (task.kind) {
       case "FOLLOW":
-        try {
-          const res = await this.ig.follow(task.userId);
-          const following = !!res?.friendship_status?.following;
-          return {
-            ok: true,
-            action: "follow",
-            userId: task.userId,
-            username: task.username,
-            result: following ? "already_following" : "followed",
-          };
-        } catch (e) {
-          return {
-            ok: false,
-            action: "follow",
-            userId: task.userId,
-            username: task.username,
-            error: String(e.message || e),
-          };
-        }
+        return await this.ig.follow(task.userId);
       case "UNFOLLOW":
         return await this.ig.unfollow(task.userId);
       case "LIKE": {
@@ -199,8 +181,6 @@ export class IGRunner {
         return await this.ig.listFollowers(task);
       case "LIST_FOLLOWING":
         return await this.ig.listFollowing(task);
-      case "FRIENDSHIP_STATUS_BULK":
-        return await this.ig.getFriendshipStatusBulk(task.ids || []);
       default:
         throw new Error("unknown_task");
     }

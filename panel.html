@@ -47,7 +47,7 @@
   </div>
   <div id="tab-settings" class="tab-content">
       <div class="card">
-        <label>Delay (segundos) <input id="cfgDelaySec" type="number" min="0" title="Segundos entre ações" /> </label>
+        <label>Aguardar <input id="cfgDelayMs" type="number" min="0" /> ms entre ações</label>
         <label>Aleatório até <input id="cfgJitterPct" type="number" min="0" max="100" />%</label>
         <label>Tamanho da página padrão <input id="cfgPageSize" type="number" min="10" max="200" step="10" /></label>
         <label>Curtidas por perfil (default) <input id="cfgLikePerProfile" type="number" min="0" max="12" /></label>
@@ -58,11 +58,10 @@
             <option value="unfollow">Deixar de seguir</option>
           </select>
         </label>
-        <label><input id="cfgIncludeAlreadyFollowing" type="checkbox" /> Incluir perfis já seguidos</label>
         <div class="dialog-buttons"><button id="cfgSave">Salvar</button></div>
       </div>
-    </div>
   </div>
+</div>
 
 <div id="rsx-overlay" class="rsx-ov">
   <div class="rsx-ov-line"><b>Próxima ação em:</b> <span id="rsx-eta">--:--.-</span></div>

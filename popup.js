@@ -13,22 +13,3 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.close();
   });
 });
-
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.__RSX_V2__ && msg.type === 'QEVENT_V2') {
-    if (msg.sub === 'tick' || msg.sub === 'done') {
-      const sumEl = document.getElementById('summary');
-      if (!sumEl) return;
-      sumEl.style.display = 'block';
-      document.getElementById('sumProcessed').textContent = `${msg.processed}/${msg.total}`;
-    }
-  } else if (msg?.type === 'QUEUE_SUMMARY') {
-    const sumEl = document.getElementById('summary');
-    if (!sumEl) return;
-    sumEl.style.display = 'block';
-    document.getElementById('sumProcessed').textContent = msg.processed;
-    document.getElementById('sumSuccess').textContent = msg.success;
-    document.getElementById('sumFailed').textContent = msg.failed;
-    document.getElementById('sumSkipped').textContent = msg.skipped;
-  }
-});

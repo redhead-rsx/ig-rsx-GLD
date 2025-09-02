@@ -60,7 +60,7 @@ if (window.__IG_CS_TASK_HANDLER) {
       );
       return true;
     } else if (
-      ['ROW_UPDATE', 'QUEUE_TICK', 'QUEUE_DONE', 'FOLLOWERS_LOADED', 'QEVENT_V2'].includes(
+      ['ROW_UPDATE', 'QUEUE_TICK', 'QUEUE_DONE', 'FOLLOWERS_LOADED'].includes(
         msg.type,
       )
     ) {
@@ -122,8 +122,7 @@ function execTask(action, payload = {}) {
   });
 }
 
-async function loadUsers(limit, mode, opts = {}) {
-  const includeAlready = !!opts.includeAlreadyFollowing;
+async function loadUsers(limit, mode) {
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
     return { items: [], total: 0, error: "invalid_username_or_limit" };
@@ -147,18 +146,11 @@ async function loadUsers(limit, mode, opts = {}) {
     });
     const batch = res?.data?.users || [];
     if (!batch.length) break;
-    const rel = await execTask("FRIENDSHIP_STATUS_BULK", {
-      ids: batch.map((u) => u.id),
-    }).catch(() => ({}));
     for (const u of batch) {
-      if (seen.has(u.id)) continue;
-      seen.add(u.id);
-      const fr = rel?.data?.[u.id];
-      const item = { id: u.id, username: u.username };
-      if (!includeAlready && fr?.following) {
-        item.status = { skip_reason: 'already_following' };
+      if (!seen.has(u.id)) {
+        seen.add(u.id);
+        items.push({ id: u.id, username: u.username });
       }
-      items.push(item);
       if (items.length >= limit) break;
     }
     log(`[collect] fetched ${items.length}/${limit}`);
@@ -179,9 +171,7 @@ window.addEventListener("message", async (ev) => {
   if (msg.type === "LOAD_FOLLOWERS" || msg.type === "LOAD_FOLLOWING") {
     const limit = Math.max(0, Math.min(200, parseInt(msg.limit, 10) || 0));
     const mode = msg.type === "LOAD_FOLLOWING" ? "following" : "followers";
-    const res = await loadUsers(limit, mode, {
-      includeAlreadyFollowing: msg.includeAlreadyFollowing,
-    });
+    const res = await loadUsers(limit, mode);
     window.postMessage(
       { type: "FOLLOWERS_LOADED", items: res.items, total: res.total, error: res.error },
       "*",
