@@ -31,8 +31,9 @@ const followIndex = {
             cursor,
           });
           for (const u of users || []) {
-            const { id, username } = normUser(u);
-            if (!id) continue;
+            const nu = normUser(u);
+            if (!nu?.id) continue;
+            const { id, username } = nu;
             this.add(id, username);
             if (this.ids.size >= max) break;
           }

@@ -3,9 +3,26 @@ function log(...args) {
 }
 
 function normUser(u) {
-  const id = String(u?.pk ?? u?.id ?? '').trim();
-  const username = String(u?.username ?? '').trim().toLowerCase();
-  return { id, username };
+  const id = String(u?.pk ?? u?.id ?? "").trim();
+  const username = String(u?.username ?? u?.handle ?? "")
+    .trim()
+    .toLowerCase();
+  return id ? { id, username } : null;
+}
+
+function dedupById(arr) {
+  const seen = new Set();
+  const out = [];
+  for (const u of arr) {
+    if (!u || !u.id || seen.has(u.id)) continue;
+    seen.add(u.id);
+    out.push(u);
+  }
+  return out;
+}
+
+function appendStable(store, kept) {
+  for (const u of kept) store.push(u);
 }
 
 // Inject helper scripts into the page
@@ -132,7 +149,64 @@ function execTask(action, payload = {}) {
   });
 }
 
+let currentBatchId = 0;
+
+async function processBatchStrict(rawBatch, cfg) {
+  const norm = rawBatch.map(normUser).filter((u) => u && u.id);
+  const unique = dedupById(norm);
+
+  let removedIdx = 0;
+  let phase1 = unique;
+  if (!cfg.includeAlreadyFollowing && unique.length) {
+    const chk = await execTask('FOLLOW_INDEX_CHECK', {
+      ids: unique.map((u) => u.id),
+    }).catch(() => ({ data: { ids: [] } }));
+    const idxSet = new Set(chk.data?.ids || []);
+    phase1 = [];
+    for (const u of unique) {
+      if (idxSet.has(u.id)) {
+        removedIdx++;
+        continue;
+      }
+      phase1.push(u);
+    }
+  }
+
+  let rel = {};
+  if (phase1.length) {
+    rel = (
+      await execTask('FRIENDSHIP_STATUS_BULK', {
+        ids: phase1.map((u) => u.id),
+      }).catch(() => ({ data: {} }))
+    ).data || {};
+  }
+
+  const kept = [];
+  let removedBulk = 0;
+  for (const u of phase1) {
+    const r = rel[u.id];
+    if (!cfg.includeAlreadyFollowing && r?.following) {
+      removedBulk++;
+      continue;
+    }
+    kept.push({ ...u, rel: r || null });
+  }
+
+  return {
+    kept,
+    removed: removedIdx + removedBulk,
+    stats: {
+      raw: rawBatch.length,
+      norm: norm.length,
+      dedup: unique.length,
+      p1IndexDrop: removedIdx,
+      bulkDrop: removedBulk,
+    },
+  };
+}
+
 async function loadUsers(limit, mode) {
+  const myId = ++currentBatchId;
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
     return { items: [], total: 0, error: "invalid_username_or_limit" };
@@ -142,9 +216,7 @@ async function loadUsers(limit, mode) {
       (r) => resolve(r),
     ),
   );
-  const includeAlreadyFollowing = !!cfg.includeAlreadyFollowing;
   log(`[collect] start ${mode} target ${limit}`);
-  // bootstrap follow index early
   execTask('FOLLOW_INDEX_INIT', {}).catch(() => {});
   const lookup = await execTask("LOOKUP", { username }).catch((e) => {
     console.error('[cs]', '[collect] lookup failed', e);
@@ -156,7 +228,6 @@ async function loadUsers(limit, mode) {
   let items = [];
   let cursor = null;
   let removedAlreadyFollowing = 0;
-  let batchIdx = 0;
   while (items.length < limit) {
     const res = await execTask(
       mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
@@ -165,65 +236,32 @@ async function loadUsers(limit, mode) {
       console.error('[cs]', '[collect] page failed', e);
       return null;
     });
-    const rawBatch = (res?.data?.users || []).map(normUser);
-    if (!rawBatch.length) break;
-    batchIdx++;
-    const unique = [];
-    for (const u of rawBatch) {
-      if (!u.id) {
-        console.debug('[collect] skipped user without id @%s', u.username);
-        continue;
-      }
-      if (!seen.has(u.id)) {
-        seen.add(u.id);
-        unique.push({ id: u.id, username: u.username });
-      }
+    const raw0 = res?.data?.users || [];
+    const rawBatch = [];
+    for (const u of raw0) {
+      const id = String(u?.pk ?? u?.id ?? "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      rawBatch.push(u);
     }
-    const chk = await execTask('FOLLOW_INDEX_CHECK', {
-      ids: unique.map((u) => u.id),
-    }).catch(() => ({ data: { ids: [] } }));
-    const idxSet = new Set(chk.data?.ids || []);
-    const keptPhase1 = [];
-    let removedIdx = 0;
-    for (const u of unique) {
-      if (idxSet.has(u.id)) {
-        removedIdx++;
-        console.debug('[filter] removed already_following id=%s @%s', u.id, u.username);
-        continue;
-      }
-      keptPhase1.push(u);
+    if (!rawBatch.length) {
+      cursor = res?.data?.nextCursor || res?.data?.cursor;
+      if (!cursor) break;
+      continue;
     }
-    
-    let rel = {};
-    if (keptPhase1.length) {
-      rel = (
-        await execTask('FRIENDSHIP_STATUS_BULK', {
-          ids: keptPhase1.map((u) => u.id),
-        }).catch(() => ({ data: {} }))
-      ).data || {};
+    const { kept, removed, stats } = await processBatchStrict(rawBatch, cfg);
+    if (myId !== currentBatchId) {
+      return { items, total: items.length, removedAlreadyFollowing };
     }
-    const kept = [];
-    let removedBulk = 0;
-    for (const u of keptPhase1) {
-      const r = rel[u.id] || { following: false, followed_by: false };
-      u.rel = r;
-      if (!includeAlreadyFollowing && r.following) {
-        removedBulk++;
-        console.debug('[filter] removed already_following id=%s @%s', u.id, u.username);
-        continue;
-      }
-      kept.push(u);
-      if (items.length + kept.length >= limit) break;
-    }
-    items.push(...kept);
-    removedAlreadyFollowing += removedIdx + removedBulk;
+    appendStable(items, kept);
+    removedAlreadyFollowing += removed;
     console.debug(
-      `[filter] idx=%d raw=%d dedup=%d p1RemovedByIndex=%d p2RemovedByBulk=%d kept=%d total=%d/%d`,
-      batchIdx,
-      rawBatch.length,
-      unique.length,
-      removedIdx,
-      removedBulk,
+      `[batch] raw=%d norm=%d dedup=%d p1IndexDrop=%d bulkDrop=%d kept=%d total=%d/%d`,
+      stats.raw,
+      stats.norm,
+      stats.dedup,
+      stats.p1IndexDrop,
+      stats.bulkDrop,
       kept.length,
       items.length,
       limit,
@@ -231,8 +269,8 @@ async function loadUsers(limit, mode) {
     window.postMessage(
       {
         type: 'COLLECT_PROGRESS',
-        batchRaw: rawBatch.length,
-        batchDedup: unique.length,
+        batchRaw: stats.raw,
+        batchDedup: stats.dedup,
         removedAlreadyFollowing,
         total: items.length,
         target: limit,
