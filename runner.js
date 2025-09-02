@@ -181,6 +181,8 @@ export class IGRunner {
         return await this.ig.listFollowers(task);
       case "LIST_FOLLOWING":
         return await this.ig.listFollowing(task);
+      case "FRIENDSHIP_STATUS_BULK":
+        return await this.ig.getFriendshipStatusBulk(task.ids || task.userIds || []);
       default:
         throw new Error("unknown_task");
     }
