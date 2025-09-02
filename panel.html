@@ -24,6 +24,7 @@
         </div>
       </div>
       <label id="limitLabel">Limite: <input id="limit" type="number" min="0" max="200" value="200" /></label>
+      <span id="collectProgress"></span>
     </div>
     <div id="queueContainer" class="card">
       <table id="queueTable">
@@ -58,10 +59,11 @@
             <option value="unfollow">Deixar de seguir</option>
           </select>
         </label>
+        <label><input type="checkbox" id="cfgIncludeAlreadyFollowing"> Incluir perfis já seguidos</label>
         <div class="dialog-buttons"><button id="cfgSave">Salvar</button></div>
       </div>
+    </div>
   </div>
-</div>
 
 <div id="rsx-overlay" class="rsx-ov">
   <div class="rsx-ov-line"><b>Próxima ação em:</b> <span id="rsx-eta">--:--.-</span></div>

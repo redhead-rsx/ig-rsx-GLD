@@ -126,6 +126,13 @@ async function loadUsers(limit, mode) {
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
     return { items: [], total: 0, error: "invalid_username_or_limit" };
+  const cfg = await new Promise((resolve) =>
+    chrome.storage.local.get(
+      { includeAlreadyFollowing: false },
+      (r) => resolve(r),
+    ),
+  );
+  const includeAlreadyFollowing = !!cfg.includeAlreadyFollowing;
   log(`[collect] start ${mode} target ${limit}`);
   const lookup = await execTask("LOOKUP", { username }).catch((e) => {
     console.error('[cs]', '[collect] lookup failed', e);
@@ -136,6 +143,7 @@ async function loadUsers(limit, mode) {
   const seen = new Set();
   let items = [];
   let cursor = null;
+  let removedAlreadyFollowing = 0;
   while (items.length < limit) {
     const res = await execTask(
       mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
@@ -146,23 +154,49 @@ async function loadUsers(limit, mode) {
     });
     const batch = res?.data?.users || [];
     if (!batch.length) break;
+    const fresh = [];
     for (const u of batch) {
       if (!seen.has(u.id)) {
         seen.add(u.id);
-        items.push({ id: u.id, username: u.username });
+        fresh.push({ id: u.id, username: u.username });
       }
+    }
+    let rel = {};
+    if (fresh.length) {
+      rel = (
+        await execTask('FRIENDSHIP_STATUS_BULK', {
+          ids: fresh.map((u) => u.id),
+        }).catch(() => ({ data: {} }))
+      ).data || {};
+    }
+    for (const u of fresh) {
+      const r = rel[u.id] || { following: false, followed_by: false };
+      u.rel = r;
+      if (!includeAlreadyFollowing && r.following) {
+        removedAlreadyFollowing++;
+        continue;
+      }
+      items.push(u);
       if (items.length >= limit) break;
     }
-    log(`[collect] fetched ${items.length}/${limit}`);
+    log(
+      `[collect] progress: fetched=${items.length} totalTarget=${limit}`,
+    );
     window.postMessage(
-      { type: "PROGRESS", done: items.length, total: limit },
-      "*",
+      {
+        type: 'COLLECT_PROGRESS',
+        fetched: items.length,
+        totalTarget: limit,
+        deduped: seen.size,
+        removedAlreadyFollowing,
+      },
+      '*',
     );
     cursor = res?.data?.nextCursor || res?.data?.cursor;
     if (!cursor) break;
   }
   items = items.slice(0, limit);
-  return { items, total: items.length };
+  return { items, total: items.length, removedAlreadyFollowing };
 }
 
 window.addEventListener("message", async (ev) => {
@@ -173,7 +207,13 @@ window.addEventListener("message", async (ev) => {
     const mode = msg.type === "LOAD_FOLLOWING" ? "following" : "followers";
     const res = await loadUsers(limit, mode);
     window.postMessage(
-      { type: "FOLLOWERS_LOADED", items: res.items, total: res.total, error: res.error },
+      {
+        type: "FOLLOWERS_LOADED",
+        items: res.items,
+        total: res.total,
+        error: res.error,
+        removedAlreadyFollowing: res.removedAlreadyFollowing,
+      },
       "*",
     );
   } else if (msg.type === "START_QUEUE") {

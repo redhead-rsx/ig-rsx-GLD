@@ -92,6 +92,13 @@ button:disabled {
   background: #f1c40f;
   color: #000;
 }
+.badge.info {
+  background: #95a5a6;
+  color: #fff;
+}
+#collectProgress {
+  margin-left: 8px;
+}
 .tab-content {
   display: none;
 }

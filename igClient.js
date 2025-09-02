@@ -15,6 +15,10 @@ export function igHeaders(extra = {}) {
   };
 }
 
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export async function userIdFromUsernameApi(username) {
   const u = `/api/v1/users/web_profile_info/?username=${encodeURIComponent(
     username
@@ -39,6 +43,9 @@ export async function userIdFromUsernameApi(username) {
 export class IGClient {
   constructor() {
     this.base = "https://www.instagram.com";
+    this._relCache = new Map();
+    this._relTtlMs = 15 * 60 * 1000;
+    this._relBatchSize = 50;
   }
 
   getCsrf() {
@@ -145,6 +152,86 @@ export class IGClient {
         ? cont.page_info.end_cursor
         : null,
     };
+  }
+
+  async getFriendshipStatusBulk(userIds = []) {
+    const res = {};
+    const now = Date.now();
+    const toQuery = [];
+    for (const id of userIds) {
+      const cached = this._relCache.get(id);
+      if (cached && now - cached.ts < this._relTtlMs) {
+        res[id] = {
+          following: !!cached.following,
+          followed_by: !!cached.followed_by,
+        };
+      } else {
+        toQuery.push(id);
+      }
+    }
+
+    const chunks = [];
+    for (let i = 0; i < toQuery.length; i += this._relBatchSize) {
+      chunks.push(toQuery.slice(i, i + this._relBatchSize));
+    }
+
+    for (const chunk of chunks) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const body = new URLSearchParams({ user_ids: chunk.join(',') });
+          const data = await this._fetch(
+            '/api/v1/friendships/show_many/',
+            { method: 'POST', body }
+          );
+          const fs = data?.friendship_statuses || {};
+          for (const [id, r] of Object.entries(fs)) {
+            const entry = {
+              following: !!r.following,
+              followed_by: !!r.followed_by,
+            };
+            this._relCache.set(id, { ...entry, ts: Date.now() });
+            res[id] = entry;
+          }
+          break;
+        } catch (e) {
+          if (String(e.message || e).startsWith('http_429')) {
+            const wait = Math.min(2000 * 2 ** attempt, 60000) + Math.random() * 1000;
+            console.debug('[collect] backoff: ms=%d (429)', Math.round(wait));
+            await delay(wait);
+            continue;
+          }
+          for (const id of chunk) {
+            res[id] = {
+              following: false,
+              followed_by: false,
+              rel_unknown: true,
+            };
+          }
+          break;
+        }
+      }
+    }
+
+    console.debug(
+      '[collect] bulk rel: requested=%d, cachedHit=%d',
+      userIds.length,
+      userIds.length - toQuery.length,
+    );
+
+    for (const id of userIds) {
+      if (!res[id]) {
+        const cached = this._relCache.get(id);
+        if (cached) {
+          res[id] = {
+            following: !!cached.following,
+            followed_by: !!cached.followed_by,
+          };
+        } else {
+          res[id] = { following: false, followed_by: false, rel_unknown: true };
+        }
+      }
+    }
+    return res;
   }
 
   // ---------- FEED ----------

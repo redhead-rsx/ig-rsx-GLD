@@ -4,6 +4,7 @@ const DEFAULT_CFG = {
   pageSize: 10,
   likePerProfile: 1,
   actionModeDefault: 'follow_like',
+  includeAlreadyFollowing: false,
 };
 let cfg = { ...DEFAULT_CFG };
 let followers = [];
@@ -37,6 +38,9 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     page = 1;
     renderTable();
     updatePager();
+    if (typeof msg.removedAlreadyFollowing === 'number') {
+      qs('#collectProgress').textContent = `Coletados ${followers.length}/${msg.total} (removidos ${msg.removedAlreadyFollowing} já seguidos)`;
+    }
   } else if (msg.type === 'ROW_UPDATE') {
     const row = followers.find((f) => f.id === msg.id);
     if (row) {
@@ -74,6 +78,8 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     ovTimer = null;
     tickOverlay();
     updateRunButtons();
+  } else if (msg.type === 'COLLECT_PROGRESS') {
+    qs('#collectProgress').textContent = `Coletados ${msg.fetched}/${msg.totalTarget} (removidos ${msg.removedAlreadyFollowing || 0} já seguidos)`;
   }
 };
 window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
@@ -212,7 +218,7 @@ function renderTable() {
     const tdUser = document.createElement('td');
     tdUser.textContent = '@' + f.username;
     const tdStatus = document.createElement('td');
-    tdStatus.innerHTML = renderStatus(f.status);
+    tdStatus.innerHTML = renderStatus(f);
     tr.appendChild(tdChk);
     tr.appendChild(tdUser);
     tr.appendChild(tdStatus);
@@ -220,7 +226,10 @@ function renderTable() {
   }
 }
 
-function renderStatus(st) {
+function renderStatus(f) {
+  const st = f.status;
+  if (f.rel?.rel_unknown) return '<span class="badge wait">?</span>';
+  if (f.rel?.following) return '<span class="badge info">Já seguia</span>';
   if (!st) return '';
   if (st.error) return `<span class="badge error">${st.error}</span>`;
   if (st.likesTotal)
@@ -263,6 +272,7 @@ function getCurrentCfg() {
       +qs('#cfgLikePerProfile').value || cfg.likePerProfile || DEFAULT_CFG.likePerProfile,
     actionModeDefault:
       qs('#cfgMode').value || cfg.actionModeDefault || DEFAULT_CFG.actionModeDefault,
+    includeAlreadyFollowing: qs('#cfgIncludeAlreadyFollowing').checked,
   };
 }
 
@@ -276,6 +286,7 @@ function saveCfgFromInputs() {
   qs('#cfgJitterPct').value = cfg.jitterPct;
   qs('#cfgLikePerProfile').value = cfg.likePerProfile;
   qs('#cfgMode').value = cfg.actionModeDefault;
+  qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
   qs('#modeFollow').checked = cfg.actionModeDefault === 'follow';
   qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';
   qs('#modeUnfollow').checked = cfg.actionModeDefault === 'unfollow';
@@ -293,6 +304,7 @@ function loadCfg() {
     qs('#cfgPageSize').value = cfg.pageSize;
     qs('#cfgLikePerProfile').value = cfg.likePerProfile;
     qs('#cfgMode').value = cfg.actionModeDefault;
+    qs('#cfgIncludeAlreadyFollowing').checked = cfg.includeAlreadyFollowing;
     qs('#likeCount').value = cfg.likePerProfile;
     qs('#modeFollow').checked = cfg.actionModeDefault === 'follow';
     qs('#modeFollowLike').checked = cfg.actionModeDefault === 'follow_like';

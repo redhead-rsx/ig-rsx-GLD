@@ -4,6 +4,7 @@ const DEFAULT_CFG = {
   pageSize: 10,
   likePerProfile: 1,
   actionModeDefault: 'follow_like',
+  includeAlreadyFollowing: false,
 };
 
 // Central queue state (source of truth)
