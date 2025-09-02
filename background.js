@@ -16,13 +16,92 @@ const q = {
   paused: false,
   phase: 'idle', // 'waiting'|'executing'|'backoff'|'paused'|'done'
   nextActionAt: null,
-  timerId: null,
   // extra state
   mode: 'follow',
   likeCount: 0,
   cfg: { ...DEFAULT_CFG },
   tabId: null,
 };
+
+const ALARM_NEXT_ACTION = 'ALARM_NEXT_ACTION';
+const ALARM_BACKOFF = 'ALARM_BACKOFF';
+const ALARM_WATCHDOG = 'ALARM_WATCHDOG';
+
+async function saveQ(partial) {
+  Object.assign(q, partial);
+  await chrome.storage.session.set({
+    q_isRunning: q.isRunning,
+    q_idx: q.idx,
+    q_total: q.total,
+    q_processed: q.processed,
+    q_phase: q.phase,
+    q_nextActionAt: q.nextActionAt,
+    q_cfg: q.cfg,
+    q_items: q.items,
+  });
+}
+
+async function rehydrate() {
+  const s = await chrome.storage.session.get([
+    'q_isRunning',
+    'q_idx',
+    'q_total',
+    'q_processed',
+    'q_phase',
+    'q_nextActionAt',
+    'q_cfg',
+    'q_items',
+  ]);
+  Object.assign(
+    q,
+    {
+      items: [],
+      idx: 0,
+      total: 0,
+      processed: 0,
+      isRunning: false,
+      paused: false,
+      phase: 'idle',
+      nextActionAt: null,
+      cfg: { ...DEFAULT_CFG },
+    },
+    {
+      items: s.q_items || [],
+      idx: s.q_idx || 0,
+      total: s.q_total || 0,
+      processed: s.q_processed || 0,
+      isRunning: s.q_isRunning || false,
+      phase: s.q_phase || 'idle',
+      nextActionAt: s.q_nextActionAt || null,
+      cfg: { ...DEFAULT_CFG, ...(s.q_cfg || {}) },
+    },
+  );
+  if (q.isRunning) {
+    if (q.phase === 'waiting' || q.phase === 'backoff') {
+      if (Date.now() >= (q.nextActionAt || 0)) {
+        if (q.phase === 'backoff') {
+          scheduleNext(computeNextDelayMs());
+        } else {
+          startAction();
+        }
+      } else {
+        chrome.alarms.create(
+          q.phase === 'backoff' ? ALARM_BACKOFF : ALARM_NEXT_ACTION,
+          { when: q.nextActionAt },
+        );
+      }
+    } else if (q.phase === 'executing') {
+      startAction();
+    }
+  }
+  chrome.alarms.create(ALARM_WATCHDOG, {
+    when: Date.now() + 60_000,
+    periodInMinutes: 1,
+  });
+}
+
+chrome.runtime.onStartup?.addListener(rehydrate);
+rehydrate();
 
 let backoffStep = 0;
 let cachedCfg = { ...DEFAULT_CFG };
@@ -59,17 +138,22 @@ function scheduleNext(waitMs) {
   if (q.paused) return;
   q.phase = 'waiting';
   q.nextActionAt = Date.now() + waitMs;
-  if (q.timerId) clearTimeout(q.timerId);
+  chrome.alarms.clear(ALARM_NEXT_ACTION);
+  chrome.alarms.clear(ALARM_BACKOFF);
+  saveQ({ phase: 'waiting', nextActionAt: q.nextActionAt });
   emitTick({ nextDelayMs: waitMs });
   log(`scheduleNext waitMs=${waitMs} nextAt=${q.nextActionAt}`);
-  q.timerId = setTimeout(startAction, waitMs);
+  chrome.alarms.create(ALARM_NEXT_ACTION, { when: q.nextActionAt });
 }
 
 async function startAction() {
   if (q.paused) return;
+  chrome.alarms.clear(ALARM_NEXT_ACTION);
+  chrome.alarms.clear(ALARM_BACKOFF);
   if (q.idx >= q.total) return finishQueue();
 
   q.phase = 'executing';
+  await saveQ({ phase: 'executing' });
   emitTick();
   log(`startAction idx=${q.idx}/total=${q.total} phase=executing`);
 
@@ -78,7 +162,9 @@ async function startAction() {
 
   // Resultado sempre processado
   postToPanel({ type: 'ROW_UPDATE', id: item.id, status: resp.status });
-  log(`result idx=${q.idx} ok=${!resp.status.error} backoffMs=${resp.backoffMs || 0}`);
+  log(
+    `result idx=${q.idx} ok=${!resp.status.error} backoffMs=${resp.backoffMs || 0}`,
+  );
 
   q.processed++;
   q.idx++;
@@ -86,13 +172,13 @@ async function startAction() {
   if (q.idx >= q.total) return finishQueue();
 
   if (resp && resp.backoffMs) {
-    q.phase = 'backoff';
     const ms = Math.max(0, resp.backoffMs);
+    q.phase = 'backoff';
     q.nextActionAt = Date.now() + ms;
-    if (q.timerId) clearTimeout(q.timerId);
     emitTick({ backoffMs: ms });
     log(`scheduleNext(backoff) waitMs=${ms} nextAt=${q.nextActionAt}`);
-    q.timerId = setTimeout(() => scheduleNext(computeNextDelayMs()), ms);
+    saveQ({ phase: 'backoff', nextActionAt: q.nextActionAt });
+    chrome.alarms.create(ALARM_BACKOFF, { when: q.nextActionAt });
   } else {
     scheduleNext(computeNextDelayMs());
   }
@@ -101,11 +187,10 @@ async function startAction() {
 function finishQueue() {
   q.isRunning = false;
   q.phase = 'done';
-  if (q.timerId) {
-    clearTimeout(q.timerId);
-    q.timerId = null;
-  }
   q.nextActionAt = null;
+  chrome.alarms.clear(ALARM_NEXT_ACTION);
+  chrome.alarms.clear(ALARM_BACKOFF);
+  saveQ({ isRunning: false, phase: 'done', nextActionAt: null });
   emitTick();
   postToPanel({ type: 'QUEUE_DONE', processed: q.processed, total: q.total });
 }
@@ -118,11 +203,17 @@ function stopQueue() {
   q.idx = 0;
   q.total = 0;
   q.processed = 0;
-  if (q.timerId) {
-    clearTimeout(q.timerId);
-    q.timerId = null;
-  }
   q.nextActionAt = null;
+  chrome.alarms.clear(ALARM_NEXT_ACTION);
+  chrome.alarms.clear(ALARM_BACKOFF);
+  saveQ({
+    isRunning: false,
+    phase: 'paused',
+    idx: 0,
+    total: 0,
+    processed: 0,
+    nextActionAt: null,
+  });
   emitTick();
 }
 
@@ -256,15 +347,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// Watchdog to recover from lost timers
-setInterval(() => {
-  if (q.isRunning && !q.paused && q.phase === 'waiting' && q.nextActionAt) {
-    const late = Date.now() - q.nextActionAt;
-    if (late >= 500) {
-      log(`watchdog fired (late by ${late}ms)`);
-      if (q.timerId) clearTimeout(q.timerId);
-      startAction();
-    }
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === ALARM_BACKOFF) {
+    scheduleNext(computeNextDelayMs());
+  } else if (alarm.name === ALARM_NEXT_ACTION) {
+    startAction();
+  } else if (alarm.name === ALARM_WATCHDOG) {
+    chrome.alarms.getAll((alarms) => {
+      const hasMain = alarms.some(
+        (a) => a.name === ALARM_NEXT_ACTION || a.name === ALARM_BACKOFF,
+      );
+      if (q.isRunning && q.nextActionAt && !hasMain && Date.now() > q.nextActionAt) {
+        startAction();
+      }
+    });
   }
-}, 1000);
+});
 
