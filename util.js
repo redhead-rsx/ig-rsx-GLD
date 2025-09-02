@@ -16,7 +16,3 @@ export function dedupById(arr) {
   }
   return out;
 }
-
-export function appendStable(store, kept) {
-  for (const u of kept) store.push(u);
-}

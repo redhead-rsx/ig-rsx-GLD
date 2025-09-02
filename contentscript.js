@@ -21,9 +21,6 @@ function dedupById(arr) {
   return out;
 }
 
-function appendStable(store, kept) {
-  for (const u of kept) store.push(u);
-}
 
 // Inject helper scripts into the page
 (function inject() {
@@ -236,24 +233,22 @@ async function loadUsers(limit, mode) {
       console.error('[cs]', '[collect] page failed', e);
       return null;
     });
-    const raw0 = res?.data?.users || [];
-    const rawBatch = [];
-    for (const u of raw0) {
-      const id = String(u?.pk ?? u?.id ?? "").trim();
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      rawBatch.push(u);
-    }
-    if (!rawBatch.length) {
+    const raw = res?.data?.users || [];
+    if (!raw.length) {
       cursor = res?.data?.nextCursor || res?.data?.cursor;
       if (!cursor) break;
       continue;
     }
-    const { kept, removed, stats } = await processBatchStrict(rawBatch, cfg);
+    const { kept, removed, stats } = await processBatchStrict(raw, cfg);
     if (myId !== currentBatchId) {
       return { items, total: items.length, removedAlreadyFollowing };
     }
-    appendStable(items, kept);
+    for (const u of kept) {
+      if (seen.has(u.id)) continue;
+      seen.add(u.id);
+      items.push(u);
+      if (items.length === limit) break;
+    }
     removedAlreadyFollowing += removed;
     console.debug(
       `[batch] raw=%d norm=%d dedup=%d p1IndexDrop=%d bulkDrop=%d kept=%d total=%d/%d`,
@@ -270,7 +265,7 @@ async function loadUsers(limit, mode) {
       {
         type: 'COLLECT_PROGRESS',
         batchRaw: stats.raw,
-        batchDedup: stats.dedup,
+        batchRemovedAlreadyFollowing: removed,
         removedAlreadyFollowing,
         total: items.length,
         target: limit,
@@ -279,9 +274,8 @@ async function loadUsers(limit, mode) {
     );
     cursor = res?.data?.nextCursor || res?.data?.cursor;
     if (!cursor) break;
-    if (items.length >= limit) break;
   }
-  items = items.slice(0, limit);
+  if (items.length > limit) items.length = limit;
   return { items, total: items.length, removedAlreadyFollowing };
 }
 
