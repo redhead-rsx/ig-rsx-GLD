@@ -1,10 +1,5 @@
 import { IGClient, igHeaders } from './igClient.js';
-
-function normUser(u) {
-  const id = String(u?.pk ?? u?.id ?? '').trim();
-  const username = String(u?.username ?? u?.handle ?? '').trim().toLowerCase();
-  return { id, username };
-}
+import { normUser } from './util.js';
 
 const followIndex = {
   ready: false,

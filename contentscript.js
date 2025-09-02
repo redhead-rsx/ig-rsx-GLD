@@ -2,6 +2,12 @@ function log(...args) {
   console.debug('[cs]', ...args);
 }
 
+function normUser(u) {
+  const id = String(u?.pk ?? u?.id ?? '').trim();
+  const username = String(u?.username ?? '').trim().toLowerCase();
+  return { id, username };
+}
+
 // Inject helper scripts into the page
 (function inject() {
   for (const f of ["igClient.js", "runner.js", "injected.js"]) {
@@ -159,11 +165,15 @@ async function loadUsers(limit, mode) {
       console.error('[cs]', '[collect] page failed', e);
       return null;
     });
-    const rawBatch = res?.data?.users || [];
+    const rawBatch = (res?.data?.users || []).map(normUser);
     if (!rawBatch.length) break;
     batchIdx++;
     const unique = [];
     for (const u of rawBatch) {
+      if (!u.id) {
+        console.debug('[collect] skipped user without id @%s', u.username);
+        continue;
+      }
       if (!seen.has(u.id)) {
         seen.add(u.id);
         unique.push({ id: u.id, username: u.username });
@@ -173,8 +183,17 @@ async function loadUsers(limit, mode) {
       ids: unique.map((u) => u.id),
     }).catch(() => ({ data: { ids: [] } }));
     const idxSet = new Set(chk.data?.ids || []);
-    const keptPhase1 = unique.filter((u) => !idxSet.has(u.id));
-    let removedIdx = unique.length - keptPhase1.length;
+    const keptPhase1 = [];
+    let removedIdx = 0;
+    for (const u of unique) {
+      if (idxSet.has(u.id)) {
+        removedIdx++;
+        console.debug('[filter] removed already_following id=%s @%s', u.id, u.username);
+        continue;
+      }
+      keptPhase1.push(u);
+    }
+    
     let rel = {};
     if (keptPhase1.length) {
       rel = (
@@ -190,6 +209,7 @@ async function loadUsers(limit, mode) {
       u.rel = r;
       if (!includeAlreadyFollowing && r.following) {
         removedBulk++;
+        console.debug('[filter] removed already_following id=%s @%s', u.id, u.username);
         continue;
       }
       kept.push(u);

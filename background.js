@@ -159,6 +159,16 @@ async function startAction() {
   log(`startAction idx=${q.idx}/total=${q.total} phase=executing`);
 
   const item = q.items[q.idx];
+  const normId = String(item?.id || '').trim();
+  if (!normId) {
+    const status = { ok: false, result: 'invalid_id', error: 'user_id_missing' };
+    postToPanel({ type: 'ROW_UPDATE', id: item.id, status });
+    q.processed++;
+    q.idx++;
+    if (q.idx >= q.total) return finishQueue();
+    scheduleNext(computeNextDelayMs());
+    return;
+  }
   const resp = await execWithTimeout(item);
 
   // Resultado sempre processado
