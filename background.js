@@ -25,14 +25,15 @@ const q = {
   followsOkCycle: 0,
   feedbackStrikes: 0,
   startedAt: null,
+  backoffReason: null,
+  inFlight: false,
 };
 
 const ALARM_NEXT_ACTION = "ALARM_NEXT_ACTION";
 const ALARM_BACKOFF = "ALARM_BACKOFF";
 const ALARM_WATCHDOG = "ALARM_WATCHDOG";
+const ALARM_EXEC_WATCHDOG = "ALARM_EXEC_WATCHDOG";
 const EXEC_TIMEOUT_MS = 90_000;
-
-let execTimer = null;
 
 async function saveQ(partial) {
   Object.assign(q, partial);
@@ -48,6 +49,8 @@ async function saveQ(partial) {
     q_followsOkCycle: q.followsOkCycle,
     q_feedbackStrikes: q.feedbackStrikes,
     q_startedAt: q.startedAt,
+    q_backoffReason: q.backoffReason,
+    q_inFlight: q.inFlight,
   });
 }
 
@@ -64,6 +67,8 @@ async function rehydrate() {
     "q_followsOkCycle",
     "q_feedbackStrikes",
     "q_startedAt",
+    "q_backoffReason",
+    "q_inFlight",
   ]);
   Object.assign(
     q,
@@ -79,6 +84,8 @@ async function rehydrate() {
       cfg: { ...DEFAULT_CFG },
       feedbackStrikes: 0,
       startedAt: null,
+      backoffReason: null,
+      inFlight: false,
     },
     {
       items: s.q_items || [],
@@ -92,6 +99,8 @@ async function rehydrate() {
       followsOkCycle: s.q_followsOkCycle || 0,
       feedbackStrikes: s.q_feedbackStrikes || 0,
       startedAt: s.q_startedAt || null,
+      backoffReason: s.q_backoffReason || null,
+      inFlight: s.q_inFlight || false,
     },
   );
   let action = "none";
@@ -114,27 +123,22 @@ async function rehydrate() {
         action = "recreate_next";
       }
     } else if (q.phase === "executing") {
-      if (q.startedAt && now - q.startedAt > EXEC_TIMEOUT_MS) {
-        finalizeItem({ status: { error: "timeout" } });
+      q.inFlight = true;
+      if (q.startedAt && now - q.startedAt > EXEC_TIMEOUT_MS + 5000) {
+        finishItem({ status: { error: "timeout" } });
         action = "timeout";
       } else {
-        startAction();
+        chrome.alarms.create(ALARM_EXEC_WATCHDOG, { when: now + 1000 });
         action = "resume_exec";
       }
     }
+    chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 30_000 });
   }
-  chrome.alarms.create(ALARM_WATCHDOG, {
-    when: Date.now() + 60_000,
-    periodInMinutes: 1,
-  });
   log(
     `[rehydrate] phase=${q.phase} now=${now} nextAt=${q.nextActionAt} action=${action}`,
   );
   emitTick({
-    reason:
-      q.phase === "backoff" && q.feedbackStrikes
-        ? "feedback_required"
-        : undefined,
+    reason: q.phase === "backoff" ? q.backoffReason : undefined,
     strikes: q.feedbackStrikes,
   });
 }
@@ -174,24 +178,17 @@ function computeDelayMs() {
   }
   const jitter = ((base * jitterPct) / 100) * (Math.random() * 2 - 1);
   const delay = Math.max(0, Math.round(base + jitter));
-  log(`[sched] delayMs=${delay} base=${base} jitter=${jitterPct}%`);
+  log(`[delay] base=${base}ms jitter=${jitterPct}% → waitMs=${delay}`);
   return delay;
 }
 
-function watchdog() {
+function watchWaitingBackoff() {
   if (!q.isRunning || q.paused || q.phase === "done") return;
-  if (
-    q.phase === "executing" &&
-    q.startedAt &&
-    Date.now() - q.startedAt > EXEC_TIMEOUT_MS + 5000
-  ) {
-    finalizeItem({ status: { error: "timeout" } });
-    return;
-  }
+  const now = Date.now();
   if (q.phase === "waiting" && q.nextActionAt) {
-    const late = Date.now() - q.nextActionAt;
+    const late = now - q.nextActionAt;
     if (late > 1000) {
-      log(`[watchdog] waiting late by ${late}ms → repairing`);
+      log(`[watchdog] waiting late by ${late}ms`);
       chrome.alarms.clear(ALARM_NEXT_ACTION);
       if (late <= 60_000) {
         startAction();
@@ -199,6 +196,24 @@ function watchdog() {
         scheduleNext(computeDelayMs());
       }
     }
+  } else if (q.phase === "backoff" && q.nextActionAt) {
+    const late = now - q.nextActionAt;
+    if (late > 1000) {
+      log("[watchdog] backoff late");
+      scheduleNext(computeDelayMs());
+    }
+  }
+  chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 30_000 });
+}
+
+function execWatchdog() {
+  if (q.phase !== "executing" || !q.inFlight) return;
+  const now = Date.now();
+  if (q.startedAt && now - q.startedAt > EXEC_TIMEOUT_MS) {
+    log("[watchdog] exec timeout");
+    finishItem({ status: { error: "timeout" } });
+  } else {
+    chrome.alarms.create(ALARM_EXEC_WATCHDOG, { when: now + 1000 });
   }
 }
 
@@ -210,10 +225,17 @@ function scheduleNext(waitMs) {
   }
   if (q.paused) return;
   q.phase = "waiting";
+  q.backoffReason = null;
   q.nextActionAt = Date.now() + ms;
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
-  saveQ({ phase: "waiting", nextActionAt: q.nextActionAt });
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
+  saveQ({
+    phase: "waiting",
+    nextActionAt: q.nextActionAt,
+    backoffReason: null,
+    inFlight: false,
+  });
   emitTick();
   log(`[sched] scheduleNext waitMs=${ms} nextAt=${q.nextActionAt}`);
   chrome.alarms.create(ALARM_NEXT_ACTION, { when: q.nextActionAt });
@@ -226,15 +248,22 @@ function enterBackoff(backoffMs, reason) {
     ms = 0;
   }
   q.phase = "backoff";
+  q.backoffReason = reason;
   q.nextActionAt = Date.now() + ms;
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
-  saveQ({ phase: "backoff", nextActionAt: q.nextActionAt });
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
   const extra = { reason };
   if (reason === "feedback_required") {
     q.feedbackStrikes++;
     extra.strikes = q.feedbackStrikes;
   }
+  saveQ({
+    phase: "backoff",
+    nextActionAt: q.nextActionAt,
+    backoffReason: q.backoffReason,
+    inFlight: false,
+  });
   emitTick(extra);
   log(
     `[sched] enterBackoff waitMs=${ms} nextAt=${q.nextActionAt} reason=${reason}`,
@@ -243,47 +272,43 @@ function enterBackoff(backoffMs, reason) {
 }
 
 async function startAction() {
-  if (q.paused) return;
+  if (!q.isRunning || q.paused || q.inFlight || q.idx >= q.total) return;
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
-  if (q.idx >= q.total) return finishQueue();
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
 
   q.phase = "executing";
   q.startedAt = Date.now();
-  await saveQ({ phase: "executing", startedAt: q.startedAt });
+  q.inFlight = true;
+  await saveQ({
+    phase: "executing",
+    startedAt: q.startedAt,
+    inFlight: true,
+  });
   emitTick();
   log(`startAction idx=${q.idx}/total=${q.total} phase=executing`);
+
+  chrome.alarms.create(ALARM_EXEC_WATCHDOG, { when: Date.now() + 1000 });
 
   const item = q.items[q.idx];
   const normId = String(item?.id || "").trim();
   if (!normId) {
-    finalizeItem({
+    finishItem({
       status: { ok: false, result: "invalid_id", error: "user_id_missing" },
     });
     return;
   }
 
-  if (execTimer) clearTimeout(execTimer);
-  execTimer = setTimeout(() => {
-    log("exec timeout");
-    finalizeItem({ status: { error: "timeout" } });
-  }, EXEC_TIMEOUT_MS);
-
   const resp = await execWithTimeout(item);
-
-  clearTimeout(execTimer);
-  execTimer = null;
-  finalizeItem(resp);
+  finishItem(resp);
 }
 
-function finalizeItem(resp) {
-  if (q.phase !== "executing") return;
+function finishItem(resp) {
+  if (!q.inFlight || q.phase !== "executing") return;
   const item = q.items[q.idx];
+  q.inFlight = false;
   q.startedAt = null;
-  if (execTimer) {
-    clearTimeout(execTimer);
-    execTimer = null;
-  }
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
   postToPanel({ type: "ROW_UPDATE", id: item.id, status: resp.status });
   log(
     `result idx=${q.idx} ok=${!resp.status?.error} backoffMs=${
@@ -303,7 +328,9 @@ function finalizeItem(resp) {
 
   if (q.idx >= q.total) return finishQueue();
 
-  if (resp && resp.backoffMs) {
+  if (resp && resp.status?.error === "feedback_required") {
+    enterBackoff(60 * 60 * 1000, "feedback_required");
+  } else if (resp && resp.backoffMs) {
     enterBackoff(resp.backoffMs, resp.reason);
   } else {
     if (
@@ -326,7 +353,14 @@ function finishQueue() {
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
   chrome.alarms.clear(ALARM_WATCHDOG);
-  saveQ({ isRunning: false, phase: "done", nextActionAt: null });
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
+  saveQ({
+    isRunning: false,
+    phase: "done",
+    nextActionAt: null,
+    backoffReason: null,
+    inFlight: false,
+  });
   emitTick();
   postToPanel({ type: "QUEUE_DONE", processed: q.processed, total: q.total });
 }
@@ -345,6 +379,7 @@ function stopQueue() {
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
   chrome.alarms.clear(ALARM_WATCHDOG);
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
   saveQ({
     isRunning: false,
     phase: "idle",
@@ -354,6 +389,8 @@ function stopQueue() {
     nextActionAt: null,
     feedbackStrikes: 0,
     startedAt: null,
+    backoffReason: null,
+    inFlight: false,
   });
   emitTick();
 }
@@ -372,6 +409,7 @@ function resetQueue() {
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
   chrome.alarms.clear(ALARM_WATCHDOG);
+  chrome.alarms.clear(ALARM_EXEC_WATCHDOG);
   saveQ({
     isRunning: false,
     phase: "idle",
@@ -381,6 +419,8 @@ function resetQueue() {
     nextActionAt: null,
     feedbackStrikes: 0,
     startedAt: null,
+    backoffReason: null,
+    inFlight: false,
   });
   emitTick();
   postToPanel({ type: "QUEUE_RESET" });
@@ -388,16 +428,17 @@ function resetQueue() {
 
 function sendToTab(tabId, message, timeoutMs = 5000) {
   return new Promise((resolve) => {
-    let done = false;
-    const t = setTimeout(() => {
-      if (!done) {
-        done = true;
-        resolve({ ok: false, error: "timeout" });
-      }
-    }, timeoutMs);
+    const alarmName = `MSG_TIMEOUT_${Math.random()}`;
+    const onAlarm = (a) => {
+      if (a.name !== alarmName) return;
+      chrome.alarms.onAlarm.removeListener(onAlarm);
+      resolve({ ok: false, error: "timeout" });
+    };
+    chrome.alarms.onAlarm.addListener(onAlarm);
+    chrome.alarms.create(alarmName, { when: Date.now() + timeoutMs });
     chrome.tabs.sendMessage(tabId, message, (resp) => {
-      if (done) return;
-      clearTimeout(t);
+      chrome.alarms.clear(alarmName);
+      chrome.alarms.onAlarm.removeListener(onAlarm);
       if (chrome.runtime.lastError) {
         return resolve({ ok: false, error: chrome.runtime.lastError.message });
       }
@@ -577,10 +618,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       q.cfg = { ...DEFAULT_CFG, ...(cfg || {}) };
       backoffStep = 0;
       log("start", q.total, mode);
-      chrome.alarms.create(ALARM_WATCHDOG, {
-        when: Date.now() + 60_000,
-        periodInMinutes: 1,
-      });
+      chrome.alarms.clear(ALARM_WATCHDOG);
+      chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 30_000 });
       scheduleNext(0);
       sendResponse({ ok: true });
     });
@@ -599,14 +638,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_BACKOFF) {
-    log("[sched] onAlarm BACKOFF → scheduleNext");
-    scheduleNext(computeDelayMs());
+    if (q.phase === "backoff") {
+      log("[alarm] BACKOFF → scheduleNext");
+      scheduleNext(computeDelayMs());
+    }
   } else if (alarm.name === ALARM_NEXT_ACTION) {
-    if (q.isRunning && !q.paused) {
-      log("[sched] onAlarm NEXT_ACTION → startAction");
+    if (q.phase === "waiting" && q.isRunning && !q.paused) {
+      log("[alarm] NEXT_ACTION → startAction");
       startAction();
     }
   } else if (alarm.name === ALARM_WATCHDOG) {
-    watchdog();
+    watchWaitingBackoff();
+  } else if (alarm.name === ALARM_EXEC_WATCHDOG) {
+    execWatchdog();
   }
 });
