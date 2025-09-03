@@ -11,7 +11,14 @@ let followers = [];
 let page = 1;
 let pageSize = DEFAULT_CFG.pageSize;
 let running = false;
-let ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
+let ov = {
+  processed: 0,
+  total: 0,
+  phase: 'idle',
+  nextActionAt: null,
+  reason: null,
+  strikes: 0,
+};
 let ovTimer = null;
 let totalRemovedAlreadyFollowing = 0;
 let totalUnknown = 0;
@@ -58,8 +65,16 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     ov.total = msg.total || 0;
     ov.phase = msg.phase || 'idle';
     ov.nextActionAt = msg.nextActionAt || null;
+    ov.reason = msg.reason;
+    ov.strikes = msg.strikes;
     qs('#rsx-prog').textContent = `${ov.processed} / ${ov.total}`;
-    qs('#rsx-phase').textContent = ov.phase;
+    if (ov.phase === 'backoff' && ov.reason === 'feedback_required') {
+      qs('#rsx-phase').textContent = `Pausa de segurança (feedback_required) • strikes: ${
+        ov.strikes || 0
+      }`;
+    } else {
+      qs('#rsx-phase').textContent = ov.phase;
+    }
     tickOverlay();
     if (!ovTimer && ov.phase !== 'done' && ov.phase !== 'paused') {
       ovTimer = setInterval(tickOverlay, 200);
@@ -94,7 +109,14 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     page = 1;
     totalRemovedAlreadyFollowing = 0;
     totalUnknown = 0;
-    ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
+    ov = {
+      processed: 0,
+      total: 0,
+      phase: 'idle',
+      nextActionAt: null,
+      reason: null,
+      strikes: 0,
+    };
     qs('#rsx-prog').textContent = '0 / 0';
     qs('#rsx-phase').textContent = 'idle';
     tickOverlay();
@@ -304,11 +326,21 @@ function tickOverlay() {
     return;
   }
   const rem = Math.max(0, ov.nextActionAt - Date.now());
-  const m = Math.floor(rem / 60000);
-  const s = Math.floor((rem % 60000) / 1000);
-  const d = Math.floor((rem % 1000) / 100);
-  etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
-  if (miniEtaEl) miniEtaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  if (rem >= 3600000) {
+    const h = Math.floor(rem / 3600000);
+    const m = Math.floor((rem % 3600000) / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
+    const txt = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    etaEl.textContent = txt;
+    if (miniEtaEl) miniEtaEl.textContent = txt;
+  } else {
+    const m = Math.floor(rem / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
+    const d = Math.floor((rem % 1000) / 100);
+    etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+    if (miniEtaEl)
+      miniEtaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
 }
 
 function minimizePanel(skipSave = false) {
