@@ -23,11 +23,16 @@ const q = {
   cfg: { ...DEFAULT_CFG },
   tabId: null,
   followsOkCycle: 0,
+  feedbackStrikes: 0,
+  startedAt: null,
 };
 
 const ALARM_NEXT_ACTION = 'ALARM_NEXT_ACTION';
 const ALARM_BACKOFF = 'ALARM_BACKOFF';
 const ALARM_WATCHDOG = 'ALARM_WATCHDOG';
+const EXEC_TIMEOUT_MS = 90_000;
+
+let execTimer = null;
 
 async function saveQ(partial) {
   Object.assign(q, partial);
@@ -41,6 +46,8 @@ async function saveQ(partial) {
     q_cfg: q.cfg,
     q_items: q.items,
     q_followsOkCycle: q.followsOkCycle,
+    q_feedbackStrikes: q.feedbackStrikes,
+    q_startedAt: q.startedAt,
   });
 }
 
@@ -55,6 +62,8 @@ async function rehydrate() {
     'q_cfg',
     'q_items',
     'q_followsOkCycle',
+    'q_feedbackStrikes',
+    'q_startedAt',
   ]);
   Object.assign(
     q,
@@ -68,6 +77,8 @@ async function rehydrate() {
       phase: 'idle',
       nextActionAt: null,
       cfg: { ...DEFAULT_CFG },
+      feedbackStrikes: 0,
+      startedAt: null,
     },
     {
       items: s.q_items || [],
@@ -79,6 +90,8 @@ async function rehydrate() {
       nextActionAt: s.q_nextActionAt || null,
       cfg: { ...DEFAULT_CFG, ...(s.q_cfg || {}) },
       followsOkCycle: s.q_followsOkCycle || 0,
+      feedbackStrikes: s.q_feedbackStrikes || 0,
+      startedAt: s.q_startedAt || null,
     },
   );
   if (q.isRunning) {
@@ -96,17 +109,26 @@ async function rehydrate() {
         );
       }
     } else if (q.phase === 'executing') {
-      startAction();
+      if (q.startedAt && Date.now() - q.startedAt > EXEC_TIMEOUT_MS) {
+        finalizeItem({ status: { error: 'timeout' } });
+      } else {
+        startAction();
+      }
     }
   }
   chrome.alarms.create(ALARM_WATCHDOG, {
     when: Date.now() + 60_000,
     periodInMinutes: 1,
   });
+  emitTick({
+    reason: q.phase === 'backoff' && q.feedbackStrikes ? 'feedback_required' : undefined,
+    strikes: q.feedbackStrikes,
+  });
 }
 
 chrome.runtime.onStartup?.addListener(rehydrate);
 rehydrate();
+setInterval(checkWatchdog, 1000);
 
 let backoffStep = 0;
 let cachedCfg = { ...DEFAULT_CFG };
@@ -138,6 +160,17 @@ function computeNextDelayMs() {
   return Math.max(0, Math.round(base + jitter));
 }
 
+function checkWatchdog() {
+  if (
+    q.isRunning &&
+    q.phase === 'executing' &&
+    q.startedAt &&
+    Date.now() - q.startedAt > EXEC_TIMEOUT_MS + 5000
+  ) {
+    finalizeItem({ status: { error: 'timeout' } });
+  }
+}
+
 function scheduleNext(waitMs) {
   // units already in ms
   if (q.paused) return;
@@ -158,27 +191,46 @@ async function startAction() {
   if (q.idx >= q.total) return finishQueue();
 
   q.phase = 'executing';
-  await saveQ({ phase: 'executing' });
+  q.startedAt = Date.now();
+  await saveQ({ phase: 'executing', startedAt: q.startedAt });
   emitTick();
   log(`startAction idx=${q.idx}/total=${q.total} phase=executing`);
 
   const item = q.items[q.idx];
   const normId = String(item?.id || '').trim();
   if (!normId) {
-    const status = { ok: false, result: 'invalid_id', error: 'user_id_missing' };
-    postToPanel({ type: 'ROW_UPDATE', id: item.id, status });
-    q.processed++;
-    q.idx++;
-    if (q.idx >= q.total) return finishQueue();
-    scheduleNext(computeNextDelayMs());
+    finalizeItem({
+      status: { ok: false, result: 'invalid_id', error: 'user_id_missing' },
+    });
     return;
   }
+
+  if (execTimer) clearTimeout(execTimer);
+  execTimer = setTimeout(() => {
+    log('exec timeout');
+    finalizeItem({ status: { error: 'timeout' } });
+  }, EXEC_TIMEOUT_MS);
+
   const resp = await execWithTimeout(item);
 
-  // Resultado sempre processado
+  clearTimeout(execTimer);
+  execTimer = null;
+  finalizeItem(resp);
+}
+
+function finalizeItem(resp) {
+  if (q.phase !== 'executing') return;
+  const item = q.items[q.idx];
+  q.startedAt = null;
+  if (execTimer) {
+    clearTimeout(execTimer);
+    execTimer = null;
+  }
   postToPanel({ type: 'ROW_UPDATE', id: item.id, status: resp.status });
   log(
-    `result idx=${q.idx} ok=${!resp.status.error} backoffMs=${resp.backoffMs || 0}`,
+    `result idx=${q.idx} ok=${!resp.status?.error} backoffMs=${
+      resp.backoffMs || 0
+    }`,
   );
 
   q.processed++;
@@ -197,7 +249,16 @@ async function startAction() {
     const ms = Math.max(0, resp.backoffMs);
     q.phase = 'backoff';
     q.nextActionAt = Date.now() + ms;
-    emitTick({ backoffMs: ms });
+    if (resp.reason === 'feedback_required') {
+      q.feedbackStrikes++;
+      emitTick({
+        backoffMs: ms,
+        reason: 'feedback_required',
+        strikes: q.feedbackStrikes,
+      });
+    } else {
+      emitTick({ backoffMs: ms, reason: resp.reason });
+    }
     log(`scheduleNext(backoff) waitMs=${ms} nextAt=${q.nextActionAt}`);
     saveQ({ phase: 'backoff', nextActionAt: q.nextActionAt });
     chrome.alarms.create(ALARM_BACKOFF, { when: q.nextActionAt });
@@ -241,6 +302,8 @@ function stopQueue() {
   q.total = 0;
   q.processed = 0;
   q.nextActionAt = null;
+  q.feedbackStrikes = 0;
+  q.startedAt = null;
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
   saveQ({
@@ -250,6 +313,8 @@ function stopQueue() {
     total: 0,
     processed: 0,
     nextActionAt: null,
+    feedbackStrikes: 0,
+    startedAt: null,
   });
   emitTick();
 }
@@ -263,6 +328,8 @@ function resetQueue() {
   q.total = 0;
   q.processed = 0;
   q.nextActionAt = null;
+  q.feedbackStrikes = 0;
+  q.startedAt = null;
   chrome.alarms.clear(ALARM_NEXT_ACTION);
   chrome.alarms.clear(ALARM_BACKOFF);
   saveQ({
@@ -272,6 +339,8 @@ function resetQueue() {
     total: 0,
     processed: 0,
     nextActionAt: null,
+    feedbackStrikes: 0,
+    startedAt: null,
   });
   emitTick();
   postToPanel({ type: 'QUEUE_RESET' });
@@ -392,20 +461,34 @@ async function execWithTimeout(item) {
     resetBackoff();
   } catch (e) {
     const err = String(e.message || e);
-    status.error = err;
-    transient = isTransientError(err);
+    if (isFeedbackRequiredError(err)) {
+      status.error = 'feedback_required';
+      transient = true;
+    } else {
+      status.error = err;
+      transient = isTransientError(err);
+    }
   }
 
   let backoffMs = null;
-  if (status.error && transient) {
+  let reason = null;
+  if (status.error === 'feedback_required') {
+    backoffMs = 60 * 60 * 1000;
+    reason = 'feedback_required';
+  } else if (status.error && transient) {
     backoffMs = calcBackoff();
   }
 
-  return { status, backoffMs };
+  return { status, backoffMs, reason };
 }
 
 function isTransientError(err) {
   return /429|rate|timeout|temporarily/i.test(err);
+}
+
+function isFeedbackRequiredError(err) {
+  return /http_400/i.test(err) &&
+    /(feedback_required|limit|limite|frequ|few minutes|espere alguns minutos)/i.test(err);
 }
 
 function calcBackoff() {
@@ -471,6 +554,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   } else if (alarm.name === ALARM_NEXT_ACTION) {
     startAction();
   } else if (alarm.name === ALARM_WATCHDOG) {
+    checkWatchdog();
     chrome.alarms.getAll((alarms) => {
       const hasMain = alarms.some(
         (a) => a.name === ALARM_NEXT_ACTION || a.name === ALARM_BACKOFF,
