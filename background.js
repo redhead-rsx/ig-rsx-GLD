@@ -254,6 +254,29 @@ function stopQueue() {
   emitTick();
 }
 
+function resetQueue() {
+  q.isRunning = false;
+  q.paused = false;
+  q.phase = 'idle';
+  q.items = [];
+  q.idx = 0;
+  q.total = 0;
+  q.processed = 0;
+  q.nextActionAt = null;
+  chrome.alarms.clear(ALARM_NEXT_ACTION);
+  chrome.alarms.clear(ALARM_BACKOFF);
+  saveQ({
+    isRunning: false,
+    phase: 'idle',
+    idx: 0,
+    total: 0,
+    processed: 0,
+    nextActionAt: null,
+  });
+  emitTick();
+  postToPanel({ type: 'QUEUE_RESET' });
+}
+
 function sendToTab(tabId, message, timeoutMs = 5000) {
   return new Promise((resolve) => {
     let done = false;
@@ -432,6 +455,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   } else if (msg.type === 'STOP_QUEUE') {
     stopQueue();
+    sendResponse({ ok: true });
+  } else if (msg.type === 'RESET_QUEUE') {
+    resetQueue();
     sendResponse({ ok: true });
   } else if (msg.type === 'CFG_UPDATED') {
     cachedCfg = { ...cachedCfg, ...(msg.cfg || {}) };

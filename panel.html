@@ -2,11 +2,13 @@
   <div id="tabs">
     <button class="tab-btn active" data-tab="queue">Fila de Contas</button>
     <button class="tab-btn" data-tab="settings">Configurações</button>
+    <button id="btnMinimize" class="tab-btn" style="margin-left:auto;">−</button>
   </div>
   <div id="tab-queue" class="tab-content active">
     <div id="topbar" class="card">
       <button id="btnStart">Iniciar</button>
       <button id="btnStop" disabled>Parar</button>
+      <button id="btnClearQueue">Remover fila</button>
       <div class="dropdown">
         <button id="btnLoad">Carregar Contas</button>
         <div id="loadMenu" class="menu">
@@ -48,8 +50,12 @@
   </div>
   <div id="tab-settings" class="tab-content">
       <div class="card">
-        <label>Cooldown (segundos) <input id="cfgDelayMs" type="number" min="0" /></label>
-        <label>Aleatório até <input id="cfgJitterPct" type="number" min="0" max="100" />%</label>
+        <label>Cooldown (segundos)
+          <input id="cfgDelayMs" type="number" min="0" />
+        </label>
+        <label>Aleatório de até
+          <input id="cfgJitterPct" type="number" min="0" max="100" />%
+        </label>
         <label>Tamanho da página padrão <input id="cfgPageSize" type="number" min="10" max="200" step="10" /></label>
         <label>Curtidas por perfil (default) <input id="cfgLikePerProfile" type="number" min="0" max="12" /></label>
         <label>Modo padrão
@@ -63,7 +69,14 @@
         <div class="dialog-buttons"><button id="cfgSave">Salvar</button></div>
       </div>
     </div>
-  </div>
+</div>
+
+<div id="panel-mini" style="display:none;">
+  <span id="miniTitle">RSX</span>
+  <span id="miniProg">0/0</span>
+  • próxima em <span id="miniEta">--:--</span>
+  <button id="btnRestore">▴</button>
+</div>
 
 <div id="rsx-overlay" class="rsx-ov">
   <div class="rsx-ov-line"><b>Próxima ação em:</b> <span id="rsx-eta">--:--.-</span></div>

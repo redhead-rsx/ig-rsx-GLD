@@ -15,6 +15,7 @@ let ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
 let ovTimer = null;
 let totalRemovedAlreadyFollowing = 0;
 let totalUnknown = 0;
+let isMinimized = false;
 
 function send(msg) {
   window.postMessage({ from: 'ig-panel', ...msg }, '*');
@@ -87,6 +88,20 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
     totalUnknown = msg.unknownTotal || 0;
     qs('#collectProgress').textContent = `Removidos: ${totalRemovedAlreadyFollowing} | Ignorados (desconhecidos): ${totalUnknown} | Mantidos: ${msg.totalKept}/${msg.target}`;
+  } else if (msg.type === 'QUEUE_RESET') {
+    running = false;
+    followers = [];
+    page = 1;
+    totalRemovedAlreadyFollowing = 0;
+    totalUnknown = 0;
+    ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
+    qs('#rsx-prog').textContent = '0 / 0';
+    qs('#rsx-phase').textContent = 'idle';
+    tickOverlay();
+    renderTable();
+    updatePager();
+    updateCollectProgress();
+    updateRunButtons();
   }
 };
 window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
@@ -119,6 +134,13 @@ function init() {
     startProcessing();
     qs('#processMenu').style.display = 'none';
   });
+  qs('#btnClearQueue').addEventListener('click', () => {
+    if (confirm('Remover a fila atual? Isso limpa a tabela e zera o progresso.')) {
+      send({ type: 'RESET_QUEUE' });
+    }
+  });
+  qs('#btnMinimize').addEventListener('click', () => minimizePanel());
+  qs('#btnRestore').addEventListener('click', () => restorePanel());
   qs('#btnStart').addEventListener('click', startProcessing);
   qs('#btnStop').addEventListener('click', stopProcessing);
   qs('#pageSize').addEventListener('change', () => {
@@ -159,6 +181,18 @@ function init() {
   });
   loadCfg();
   updateRunButtons();
+  chrome.storage.session.get({ panelMinimized: false }, (st) => {
+    if (st.panelMinimized) minimizePanel(true);
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key?.toLowerCase() === 'm' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
+      if (isMinimized) {
+        restorePanel();
+      } else {
+        minimizePanel();
+      }
+    }
+  });
 }
 
 function bindTabs() {
@@ -261,8 +295,12 @@ function updatePager() {
 
 function tickOverlay() {
   const etaEl = qs('#rsx-eta');
+  const miniEtaEl = qs('#miniEta');
+  const miniProgEl = qs('#miniProg');
+  if (miniProgEl) miniProgEl.textContent = `${ov.processed}/${ov.total}`;
   if (!ov.nextActionAt) {
     etaEl.textContent = '--:--.-';
+    if (miniEtaEl) miniEtaEl.textContent = '--:--';
     return;
   }
   const rem = Math.max(0, ov.nextActionAt - Date.now());
@@ -270,6 +308,23 @@ function tickOverlay() {
   const s = Math.floor((rem % 60000) / 1000);
   const d = Math.floor((rem % 1000) / 100);
   etaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+  if (miniEtaEl) miniEtaEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function minimizePanel(skipSave = false) {
+  qs('#panel').style.display = 'none';
+  qs('#panel-mini').style.display = 'flex';
+  isMinimized = true;
+  tickOverlay();
+  if (!skipSave) chrome.storage.session.set({ panelMinimized: true });
+}
+
+function restorePanel(skipSave = false) {
+  qs('#panel').style.display = 'block';
+  qs('#panel-mini').style.display = 'none';
+  isMinimized = false;
+  tickOverlay();
+  if (!skipSave) chrome.storage.session.set({ panelMinimized: false });
 }
 function handleLikeInput() {
   const v = parseInt(qs('#likeCount').value, 10) || 0;
