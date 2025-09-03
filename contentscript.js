@@ -86,6 +86,7 @@ if (window.__IG_CS_TASK_HANDLER) {
         'QUEUE_DONE',
         'FOLLOWERS_LOADED',
         'PRECHECK_REMOVED',
+        'QUEUE_RESET',
       ].includes(msg.type)
     ) {
       window.postMessage(msg, '*');
@@ -327,5 +328,7 @@ window.addEventListener("message", async (ev) => {
     );
   } else if (msg.type === "STOP_QUEUE") {
     chrome.runtime.sendMessage({ type: "STOP_QUEUE" });
+  } else if (msg.type === "RESET_QUEUE") {
+    chrome.runtime.sendMessage({ type: "RESET_QUEUE" });
   }
 });
