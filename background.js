@@ -250,16 +250,22 @@ function sendToTab(tabId, message, timeoutMs = 5000) {
 
 async function precheckWindow(tabId, items, windowSize = 50) {
   const slice = items.slice(0, windowSize);
+  if (!slice.length) return { items, removed: [] };
   const ids = slice.map((it) => it.id);
-  if (!ids.length) return { items, removed: [] };
-  const resp = await execCommand(tabId, 'FRIENDSHIP_STATUS_BULK', {
-    ids,
-    forceFresh: true,
-  });
+  const idxResp = await execCommand(tabId, 'FOLLOW_INDEX_CHECK', { ids });
+  const idxSet = new Set(idxResp?.data?.ids || []);
+  const phase1 = slice.filter((it) => !idxSet.has(it.id));
+  const resp = phase1.length
+    ? await execCommand(tabId, 'FRIENDSHIP_STATUS_BULK', {
+        users: phase1,
+        forceFresh: true,
+      })
+    : { data: {} };
   const rels = resp?.data || {};
-  const removedIds = new Set();
+  const removedIds = new Set(idxSet);
   const kept = [];
   for (const it of items) {
+    if (removedIds.has(it.id)) continue;
     const r = rels[it.id];
     if (r && r.following) {
       removedIds.add(it.id);
