@@ -22,6 +22,7 @@ const q = {
   likeCount: 0,
   cfg: { ...DEFAULT_CFG },
   tabId: null,
+  followsOkCycle: 0,
 };
 
 const ALARM_NEXT_ACTION = 'ALARM_NEXT_ACTION';
@@ -39,6 +40,7 @@ async function saveQ(partial) {
     q_nextActionAt: q.nextActionAt,
     q_cfg: q.cfg,
     q_items: q.items,
+    q_followsOkCycle: q.followsOkCycle,
   });
 }
 
@@ -52,6 +54,7 @@ async function rehydrate() {
     'q_nextActionAt',
     'q_cfg',
     'q_items',
+    'q_followsOkCycle',
   ]);
   Object.assign(
     q,
@@ -75,6 +78,7 @@ async function rehydrate() {
       phase: s.q_phase || 'idle',
       nextActionAt: s.q_nextActionAt || null,
       cfg: { ...DEFAULT_CFG, ...(s.q_cfg || {}) },
+      followsOkCycle: s.q_followsOkCycle || 0,
     },
   );
   if (q.isRunning) {
@@ -180,6 +184,13 @@ async function startAction() {
   q.processed++;
   q.idx++;
 
+  if (
+    (q.mode === 'follow' || q.mode === 'follow_like') &&
+    resp?.status?.followed
+  ) {
+    q.followsOkCycle++;
+  }
+
   if (q.idx >= q.total) return finishQueue();
 
   if (resp && resp.backoffMs) {
@@ -191,7 +202,22 @@ async function startAction() {
     saveQ({ phase: 'backoff', nextActionAt: q.nextActionAt });
     chrome.alarms.create(ALARM_BACKOFF, { when: q.nextActionAt });
   } else {
-    scheduleNext(computeNextDelayMs());
+    if (
+      (q.mode === 'follow' || q.mode === 'follow_like') &&
+      resp?.status?.followed &&
+      q.followsOkCycle % 40 === 0 &&
+      q.idx < q.total
+    ) {
+      const ms = 20 * 60 * 1000;
+      q.phase = 'backoff';
+      q.nextActionAt = Date.now() + ms;
+      emitTick({ backoffMs: ms, reason: 'auto_throttle_40' });
+      log(`scheduleNext(throttle) waitMs=${ms} nextAt=${q.nextActionAt}`);
+      saveQ({ phase: 'backoff', nextActionAt: q.nextActionAt });
+      chrome.alarms.create(ALARM_BACKOFF, { when: q.nextActionAt });
+    } else {
+      scheduleNext(computeNextDelayMs());
+    }
   }
 }
 
