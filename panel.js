@@ -14,6 +14,7 @@ let running = false;
 let ov = { processed: 0, total: 0, phase: 'idle', nextActionAt: null };
 let ovTimer = null;
 let totalRemovedAlreadyFollowing = 0;
+let totalUnknown = 0;
 
 function send(msg) {
   window.postMessage({ from: 'ig-panel', ...msg }, '*');
@@ -38,6 +39,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     followers = msg.items || [];
     page = 1;
     totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
+    totalUnknown = msg.unknownTotal || 0;
     renderTable();
     updatePager();
     updateCollectProgress();
@@ -83,7 +85,8 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     updateRunButtons();
   } else if (msg.type === 'COLLECT_PROGRESS') {
     totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
-    qs('#collectProgress').textContent = `Coletados ${msg.total}/${msg.target} (removidos ${totalRemovedAlreadyFollowing} já seguidos)`;
+    totalUnknown = msg.unknownTotal || 0;
+    qs('#collectProgress').textContent = `Removidos: ${totalRemovedAlreadyFollowing} | Ignorados (desconhecidos): ${totalUnknown} | Mantidos: ${msg.totalKept}/${msg.target}`;
   }
 };
 window.addEventListener('message', window.__IG_PANEL_MSG_HANDLER);
@@ -93,7 +96,7 @@ window.__IG_PANEL_CLEANUP = () => {
 };
 
 function updateCollectProgress() {
-  qs('#collectProgress').textContent = `Coletados ${followers.length}/${followers.length + totalRemovedAlreadyFollowing} (removidos ${totalRemovedAlreadyFollowing} já seguidos)`;
+  qs('#collectProgress').textContent = `Removidos: ${totalRemovedAlreadyFollowing} | Ignorados (desconhecidos): ${totalUnknown} | Mantidos: ${followers.length}/${followers.length + totalRemovedAlreadyFollowing + totalUnknown}`;
 }
 
 function init() {

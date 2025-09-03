@@ -148,19 +148,19 @@ function execTask(action, payload = {}) {
 
 let currentBatchId = 0;
 
-async function processBatchStrict(rawBatch, cfg) {
+async function processBatchStrict(rawBatch) {
   const norm = rawBatch.map(normUser).filter((u) => u && u.id);
-  const unique = dedupById(norm);
+  const uniq = dedupById(norm);
 
   let removedIdx = 0;
-  let phase1 = unique;
-  if (!cfg.includeAlreadyFollowing && unique.length) {
+  let phase1 = uniq;
+  if (uniq.length) {
     const chk = await execTask('FOLLOW_INDEX_CHECK', {
-      ids: unique.map((u) => u.id),
+      ids: uniq.map((u) => u.id),
     }).catch(() => ({ data: { ids: [] } }));
     const idxSet = new Set(chk.data?.ids || []);
     phase1 = [];
-    for (const u of unique) {
+    for (const u of uniq) {
       if (idxSet.has(u.id)) {
         removedIdx++;
         continue;
@@ -169,37 +169,57 @@ async function processBatchStrict(rawBatch, cfg) {
     }
   }
 
-  let rel = {};
-  if (phase1.length) {
-    rel = (
-      await execTask('FRIENDSHIP_STATUS_BULK', {
-        ids: phase1.map((u) => u.id),
-      }).catch(() => ({ data: {} }))
-    ).data || {};
-  }
+  if (!phase1.length) return { kept: [], removed: removedIdx, unknown: 0 };
+
+  const relResp = await execTask('FRIENDSHIP_STATUS_BULK', {
+    ids: phase1.map((u) => u.id),
+  }).catch(() => ({ data: {} }));
+  const rel = relResp.data || {};
 
   const kept = [];
-  let removedBulk = 0;
+  let removed = removedIdx;
+  let unknown = 0;
   for (const u of phase1) {
     const r = rel[u.id];
-    if (!cfg.includeAlreadyFollowing && r?.following) {
-      removedBulk++;
+    if (!r || r.resolved !== true) {
+      unknown++;
       continue;
     }
-    kept.push({ ...u, rel: r || null });
+    if (r.following === true) {
+      removed++;
+      continue;
+    }
+    kept.push({ ...u });
   }
 
-  return {
-    kept,
-    removed: removedIdx + removedBulk,
-    stats: {
-      raw: rawBatch.length,
-      norm: norm.length,
-      dedup: unique.length,
-      p1IndexDrop: removedIdx,
-      bulkDrop: removedBulk,
-    },
-  };
+  if (unknown > 0) {
+    const idsUnknown = phase1
+      .filter((u) => {
+        const r = rel[u.id];
+        return !r || r.resolved !== true;
+      })
+      .map((u) => u.id);
+    const unkSet = new Set(idsUnknown);
+    const rel2Resp = await execTask('FRIENDSHIP_STATUS_BULK', {
+      ids: idsUnknown,
+      forceFresh: true,
+    }).catch(() => ({ data: {} }));
+    const rel2 = rel2Resp.data || {};
+    for (const u of phase1) {
+      if (!unkSet.has(u.id)) continue;
+      const r2 = rel2[u.id];
+      if (!r2 || r2.resolved !== true) continue;
+      if (r2.following === true) {
+        removed++;
+        unknown--;
+        continue;
+      }
+      kept.push({ ...u });
+      unknown--;
+    }
+  }
+
+  return { kept, removed, unknown };
 }
 
 async function loadUsers(limit, mode) {
@@ -207,14 +227,8 @@ async function loadUsers(limit, mode) {
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
     return { items: [], total: 0, error: "invalid_username_or_limit" };
-  const cfg = await new Promise((resolve) =>
-    chrome.storage.local.get(
-      { includeAlreadyFollowing: false },
-      (r) => resolve(r),
-    ),
-  );
   log(`[collect] start ${mode} target ${limit}`);
-  execTask('FOLLOW_INDEX_INIT', {}).catch(() => {});
+  await execTask('FOLLOW_INDEX_INIT', {}).catch(() => {});
   const lookup = await execTask("LOOKUP", { username }).catch((e) => {
     console.error('[cs]', '[collect] lookup failed', e);
     return null;
@@ -224,7 +238,8 @@ async function loadUsers(limit, mode) {
   const seen = new Set();
   let items = [];
   let cursor = null;
-  let removedAlreadyFollowing = 0;
+  let removedTotal = 0;
+  let unknownTotal = 0;
   while (items.length < limit) {
     const res = await execTask(
       mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
@@ -239,9 +254,9 @@ async function loadUsers(limit, mode) {
       if (!cursor) break;
       continue;
     }
-    const { kept, removed, stats } = await processBatchStrict(raw, cfg);
+    const { kept, removed, unknown } = await processBatchStrict(raw);
     if (myId !== currentBatchId) {
-      return { items, total: items.length, removedAlreadyFollowing };
+      return { items, total: items.length, removedAlreadyFollowing: removedTotal, unknownTotal };
     }
     for (const u of kept) {
       if (seen.has(u.id)) continue;
@@ -249,25 +264,27 @@ async function loadUsers(limit, mode) {
       items.push(u);
       if (items.length === limit) break;
     }
-    removedAlreadyFollowing += removed;
+    removedTotal += removed;
+    unknownTotal += unknown;
     console.debug(
-      `[batch] raw=%d norm=%d dedup=%d p1IndexDrop=%d bulkDrop=%d kept=%d total=%d/%d`,
-      stats.raw,
-      stats.norm,
-      stats.dedup,
-      stats.p1IndexDrop,
-      stats.bulkDrop,
+      `[batch] raw=%d kept=%d removed=%d unknown=%d total=%d/%d`,
+      raw.length,
       kept.length,
+      removed,
+      unknown,
       items.length,
       limit,
     );
     window.postMessage(
       {
         type: 'COLLECT_PROGRESS',
-        batchRaw: stats.raw,
+        batchRaw: raw.length,
+        batchKept: kept.length,
         batchRemovedAlreadyFollowing: removed,
-        removedAlreadyFollowing,
-        total: items.length,
+        batchUnknown: unknown,
+        removedAlreadyFollowing: removedTotal,
+        unknownTotal,
+        totalKept: items.length,
         target: limit,
       },
       '*',
@@ -276,7 +293,7 @@ async function loadUsers(limit, mode) {
     if (!cursor) break;
   }
   if (items.length > limit) items.length = limit;
-  return { items, total: items.length, removedAlreadyFollowing };
+  return { items, total: items.length, removedAlreadyFollowing: removedTotal, unknownTotal };
 }
 
 window.addEventListener("message", async (ev) => {
@@ -293,6 +310,7 @@ window.addEventListener("message", async (ev) => {
         total: res.total,
         error: res.error,
         removedAlreadyFollowing: res.removedAlreadyFollowing,
+        unknownTotal: res.unknownTotal,
       },
       "*",
     );

@@ -165,10 +165,7 @@ export class IGClient {
     for (const id of userIds) {
       const cached = this._relCache.get(id);
       if (!forceFresh && cached && now - cached.ts < this._relTtlMs) {
-        res[id] = {
-          following: !!cached.following,
-          followed_by: !!cached.followed_by,
-        };
+        res[id] = { following: !!cached.following, resolved: true };
       } else {
         toQuery.push(id);
       }
@@ -183,33 +180,27 @@ export class IGClient {
       for (let attempt = 0; ; attempt++) {
         try {
           const body = new URLSearchParams({ user_ids: chunk.join(',') });
-          const data = await this._fetch(
-            '/api/v1/friendships/show_many/',
-            { method: 'POST', body }
-          );
+          const data = await this._fetch('/api/v1/friendships/show_many/', {
+            method: 'POST',
+            body,
+          });
           const fs = data?.friendship_statuses || {};
           for (const [id, r] of Object.entries(fs)) {
-            const entry = {
-              following: !!r.following,
-              followed_by: !!r.followed_by,
-            };
-            this._relCache.set(id, { ...entry, ts: Date.now() });
+            const entry = { following: !!r.following, resolved: true };
+            this._relCache.set(id, { following: entry.following, ts: Date.now() });
             res[id] = entry;
           }
           break;
         } catch (e) {
           if (String(e.message || e).startsWith('http_429')) {
-            const wait = Math.min(2000 * 2 ** attempt, 60000) + Math.random() * 1000;
+            const wait =
+              Math.min(2000 * 2 ** attempt, 60000) + Math.random() * 1000;
             console.debug('[collect] backoff: ms=%d (429)', Math.round(wait));
             await delay(wait);
             continue;
           }
           for (const id of chunk) {
-            res[id] = {
-              following: false,
-              followed_by: false,
-              rel_unknown: true,
-            };
+            res[id] = { following: false, resolved: false };
           }
           break;
         }
@@ -226,12 +217,9 @@ export class IGClient {
       if (!res[id]) {
         const cached = this._relCache.get(id);
         if (cached) {
-          res[id] = {
-            following: !!cached.following,
-            followed_by: !!cached.followed_by,
-          };
+          res[id] = { following: !!cached.following, resolved: true };
         } else {
-          res[id] = { following: false, followed_by: false, rel_unknown: true };
+          res[id] = { following: false, resolved: false };
         }
       }
     }
@@ -243,16 +231,16 @@ export class IGClient {
     const now = Date.now();
     const cached = this._relCache.get(id);
     if (!opts.forceFresh && cached && now - cached.ts < this._relTtlMs) {
-      return { following: !!cached.following, followed_by: !!cached.followed_by };
+      return { following: !!cached.following, resolved: true };
     }
     try {
       const data = await this._fetch(`/api/v1/friendships/show/${id}/`);
       const r = data?.friendship_status || data || {};
-      const entry = { following: !!r.following, followed_by: !!r.followed_by };
-      this._relCache.set(id, { ...entry, ts: Date.now() });
+      const entry = { following: !!r.following, resolved: true };
+      this._relCache.set(id, { following: entry.following, ts: Date.now() });
       return entry;
     } catch {
-      return null;
+      return { following: false, resolved: false };
     }
   }
 

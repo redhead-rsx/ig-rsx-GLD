@@ -199,7 +199,7 @@ export class IGRunner {
         const toCheck = [];
         for (const id of ids) {
           if (followIndex.hasId(id)) {
-            res[id] = { following: true, followed_by: false };
+            res[id] = { following: true, resolved: true };
           } else {
             toCheck.push(id);
           }
