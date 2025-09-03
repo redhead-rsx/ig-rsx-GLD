@@ -172,7 +172,7 @@ async function processBatchStrict(rawBatch) {
   if (!phase1.length) return { kept: [], removed: removedIdx, unknown: 0 };
 
   const relResp = await execTask('FRIENDSHIP_STATUS_BULK', {
-    ids: phase1.map((u) => u.id),
+    users: phase1,
   }).catch(() => ({ data: {} }));
   const rel = relResp.data || {};
 
@@ -193,15 +193,13 @@ async function processBatchStrict(rawBatch) {
   }
 
   if (unknown > 0) {
-    const idsUnknown = phase1
-      .filter((u) => {
-        const r = rel[u.id];
-        return !r || r.resolved !== true;
-      })
-      .map((u) => u.id);
-    const unkSet = new Set(idsUnknown);
+    const usersUnknown = phase1.filter((u) => {
+      const r = rel[u.id];
+      return !r || r.resolved !== true;
+    });
+    const unkSet = new Set(usersUnknown.map((u) => u.id));
     const rel2Resp = await execTask('FRIENDSHIP_STATUS_BULK', {
-      ids: idsUnknown,
+      users: usersUnknown,
       forceFresh: true,
     }).catch(() => ({ data: {} }));
     const rel2 = rel2Resp.data || {};

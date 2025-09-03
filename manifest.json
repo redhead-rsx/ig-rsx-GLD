@@ -25,6 +25,7 @@
         "igClient.js",
         "runner.js",
         "followIndex.js",
+        "followDb.js",
         "util.js",
         "panel.html",
         "panel.js",

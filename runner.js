@@ -4,6 +4,7 @@ import {
   userIdFromUsernameApi,
 } from "./igClient.js";
 import followIndex from "./followIndex.js";
+import followDb from "./followDb.js";
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -192,35 +193,61 @@ export class IGRunner {
       case "LIST_FOLLOWING":
         return await this.ig.listFollowing(task);
       case "FRIENDSHIP_STATUS_BULK": {
-        const ids = (task.ids || task.userIds || []).map((id) =>
-          String(id).trim(),
-        );
+        await followDb.init();
+        const users = [];
+        for (const u of task.users || []) {
+          const id = String(u?.id || "").trim();
+          if (!id) continue;
+          users.push({ id, username: String(u.username || "").trim().toLowerCase() });
+        }
+        for (const id of task.ids || task.userIds || []) {
+          const nid = String(id).trim();
+          if (!nid) continue;
+          users.push({ id: nid, username: "" });
+        }
         const res = {};
+        const ids = users.map((u) => u.id);
+        const dbHits = await followDb.bulkHas(ids);
         const toCheck = [];
-        for (const id of ids) {
-          if (followIndex.hasId(id)) {
-            res[id] = { following: true, resolved: true };
+        for (const u of users) {
+          if (followIndex.hasId(u.id) || dbHits.has(u.id)) {
+            res[u.id] = { following: true, resolved: true };
           } else {
-            toCheck.push(id);
+            toCheck.push(u);
           }
         }
         if (toCheck.length) {
-          const rel = await this.ig.getFriendshipStatusBulk(toCheck, {
-            forceFresh: !!task.forceFresh,
-          });
-          for (const [id, r] of Object.entries(rel)) {
-            res[id] = r;
-            if (r?.following) followIndex.add(id);
+          const rel = await this.ig.getFriendshipStatusBulk(
+            toCheck.map((u) => u.id),
+            { forceFresh: !!task.forceFresh },
+          );
+          const learn = [];
+          for (const u of toCheck) {
+            const r = rel[u.id];
+            if (r) {
+              res[u.id] = r;
+              if (r.following) {
+                followIndex.add(u.id, u.username);
+                learn.push({ id: u.id, username: u.username, source: "filter" });
+              }
+            }
           }
+          if (learn.length) await followDb.upsertMany(learn);
         }
         return res;
       }
-      case "FOLLOW_INDEX_INIT":
+      case "FOLLOW_INDEX_INIT": {
+        await followDb.init();
+        const sample = await followDb.sampleIds(task.max || 15000);
+        for (const id of sample) followIndex.add(id);
         await followIndex.init(task.max);
         return { ok: true };
+      }
       case "FOLLOW_INDEX_CHECK": {
+        await followDb.init();
         const ids = (task.ids || []).map((id) => String(id).trim());
-        const hits = ids.filter((id) => followIndex.hasId(id));
+        const dbHits = await followDb.bulkHas(ids);
+        const hits = ids.filter((id) => followIndex.hasId(id) || dbHits.has(id));
         return { ids: hits };
       }
       default:
@@ -231,27 +258,40 @@ export class IGRunner {
   async followWithGuard(userId, username) {
     const id = String(userId).trim();
     const uname = String(username || "").trim().toLowerCase();
-    if (followIndex.hasId(id)) {
+    await followDb.init();
+    if (followIndex.hasId(id) || (await followDb.has(id))) {
       console.debug(
-        `[guard] skip already_following id=%s user=@%s (by index)`,
+        `[guard] skip already_following id=%s user=@%s (by index/db)`,
         id,
         uname,
       );
-      return { action: "follow", userId: id, username: uname, result: "already_following" };
+      return {
+        action: "follow",
+        userId: id,
+        username: uname,
+        result: "already_following",
+      };
     }
     const r = await this.ig.getFriendshipStatusSingle(id);
     if (r?.following) {
       followIndex.add(id, uname);
+      await followDb.upsert({ id, username: uname, source: "guard" });
       console.debug(
         `[guard] skip already_following id=%s user=@%s (by single)`,
         id,
         uname,
       );
-      return { action: "follow", userId: id, username: uname, result: "already_following" };
+      return {
+        action: "follow",
+        userId: id,
+        username: uname,
+        result: "already_following",
+      };
     }
     const out = await this.ig.follow(id);
     if (out?.status === "ok" || out?.friendship_status?.following) {
       followIndex.add(id, uname);
+      await followDb.upsert({ id, username: uname, source: "success" });
     }
     return out;
   }
