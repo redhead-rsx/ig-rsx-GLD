@@ -6,12 +6,19 @@ body {
   font-family: system-ui, sans-serif;
 }
 button {
-  background: #e02424;
+  background: #0d6efd;
   border: none;
   color: #fff;
   padding: 6px 12px;
   border-radius: 4px;
   cursor: pointer;
+}
+button:not(:disabled):hover,
+button:not(:disabled):focus {
+  background: #0b5ed7;
+}
+button:not(:disabled):active {
+  background: #0a58ca;
 }
 button:disabled {
   opacity: 0.6;
