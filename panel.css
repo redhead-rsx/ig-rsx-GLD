@@ -19,7 +19,7 @@
   cursor: pointer;
 }
 .tab-btn.active {
-  border-bottom: 2px solid #e02424;
+  border-bottom: 2px solid #007bff;
 }
 .card {
   background: #333;
@@ -32,12 +32,19 @@
   margin-bottom: 8px;
 }
 button {
-  background: #e02424;
+  background: #007bff;
   border: none;
   color: #fff;
   padding: 6px 12px;
   border-radius: 4px;
   cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: #0056b3;
+}
+button:active,
+button:focus {
+  background: #004085;
 }
 button:disabled {
   opacity: 0.5;
@@ -79,6 +86,13 @@ button:disabled {
   background: #444;
   margin: 0 2px;
 }
+#pager button:hover {
+  background: #555;
+}
+#pager button:active,
+#pager button:focus {
+  background: #444;
+}
 .badge {
   padding: 2px 4px;
   border-radius: 4px;
@@ -116,7 +130,9 @@ button:disabled {
   bottom: 16px;
   background: rgba(20, 20, 20, 0.85);
   color: #eee;
-  font: 12px/1.4 system-ui, sans-serif;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
   padding: 10px 12px;
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
@@ -146,4 +162,19 @@ button:disabled {
   border: none;
   color: #fff;
   cursor: pointer;
+}
+#panel-mini button:hover {
+  background: none;
+}
+#panel-mini button:active,
+#panel-mini button:focus {
+  background: none;
+}
+
+.tab-btn:hover {
+  background: none;
+}
+.tab-btn:active,
+.tab-btn:focus {
+  background: none;
 }
