@@ -103,6 +103,7 @@ async function rehydrate() {
       inFlight: s.q_inFlight || false,
     },
   );
+  q.cfg = sanitizeConfig(q.cfg);
   let action = "none";
   const now = Date.now();
   if (q.isRunning) {
@@ -132,7 +133,7 @@ async function rehydrate() {
         action = "resume_exec";
       }
     }
-    chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 30_000 });
+    chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 10_000 });
   }
   log(
     `[rehydrate] phase=${q.phase} now=${now} nextAt=${q.nextActionAt} action=${action}`,
@@ -147,7 +148,7 @@ chrome.runtime.onStartup?.addListener(rehydrate);
 rehydrate();
 
 let backoffStep = 0;
-let cachedCfg = { ...DEFAULT_CFG };
+let cachedCfg = sanitizeConfig({ ...DEFAULT_CFG });
 
 function log(...args) {
   console.debug("[bg]", ...args);
@@ -169,31 +170,53 @@ function emitTick(extra = {}) {
   });
 }
 
+function sanitizeConfig(cfg) {
+  const c = { ...cfg };
+  let base = Number(c.baseDelayMs);
+  if (!Number.isFinite(base) || base < 1000) base = 3000;
+  let jitter = Number(c.jitterPct);
+  if (!Number.isFinite(jitter) || jitter < 0) jitter = 0;
+  if (jitter > 100) jitter = 100;
+  c.baseDelayMs = base;
+  c.jitterPct = jitter;
+  log(`[cfg] baseDelayMs=${base} jitter=${jitter}%`);
+  return c;
+}
+
 function computeDelayMs() {
-  let base = Number(q.cfg.baseDelayMs);
+  q.cfg = sanitizeConfig(q.cfg);
+  const base = Number(q.cfg.baseDelayMs);
   const jitterPct = Number(q.cfg.jitterPct) || 0;
-  if (!Number.isFinite(base) || base < 1000) {
-    log("[sched] invalid baseDelayMs, using 3000ms");
-    base = 3000;
-  }
   const jitter = ((base * jitterPct) / 100) * (Math.random() * 2 - 1);
   const delay = Math.max(0, Math.round(base + jitter));
   log(`[delay] base=${base}ms jitter=${jitterPct}% → waitMs=${delay}`);
   return delay;
 }
 
-function watchWaitingBackoff() {
-  if (!q.isRunning || q.paused || q.phase === "done") return;
+async function watchWaitingBackoff() {
+  if (!q.isRunning || q.paused || q.phase === "done") {
+    chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 10_000 });
+    return;
+  }
   const now = Date.now();
   if (q.phase === "waiting" && q.nextActionAt) {
-    const late = now - q.nextActionAt;
-    if (late > 1000) {
-      log(`[watchdog] waiting late by ${late}ms`);
-      chrome.alarms.clear(ALARM_NEXT_ACTION);
-      if (late <= 60_000) {
+    const alarm = await chrome.alarms.get(ALARM_NEXT_ACTION);
+    if (!alarm) {
+      log("[watchdog] missing NEXT_ACTION alarm → recreate");
+      if (now >= q.nextActionAt) {
         startAction();
       } else {
-        scheduleNext(computeDelayMs());
+        chrome.alarms.create(ALARM_NEXT_ACTION, { when: q.nextActionAt });
+      }
+    } else {
+      const late = now - q.nextActionAt;
+      if (late > 1000) {
+        log(`[watchdog] waiting late by ${late}ms (repair)`);
+        if (late <= 60_000) {
+          startAction();
+        } else {
+          scheduleNext(computeDelayMs());
+        }
       }
     }
   } else if (q.phase === "backoff" && q.nextActionAt) {
@@ -201,9 +224,12 @@ function watchWaitingBackoff() {
     if (late > 1000) {
       log("[watchdog] backoff late");
       scheduleNext(computeDelayMs());
+    } else {
+      const alarm = await chrome.alarms.get(ALARM_BACKOFF);
+      if (!alarm) chrome.alarms.create(ALARM_BACKOFF, { when: q.nextActionAt });
     }
   }
-  chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 30_000 });
+  chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 10_000 });
 }
 
 function execWatchdog() {
@@ -218,10 +244,10 @@ function execWatchdog() {
 }
 
 function scheduleNext(waitMs) {
+  q.cfg = sanitizeConfig(q.cfg);
   let ms = Number(waitMs);
   if (!Number.isFinite(ms) || ms < 0) {
-    log("[sched] invalid waitMs, defaulting to 0");
-    ms = 0;
+    ms = computeDelayMs();
   }
   if (q.paused) return;
   q.phase = "waiting";
@@ -615,11 +641,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       q.phase = "idle";
       q.mode = mode;
       q.likeCount = likeCount || 0;
-      q.cfg = { ...DEFAULT_CFG, ...(cfg || {}) };
+      q.cfg = sanitizeConfig({ ...DEFAULT_CFG, ...(cfg || {}) });
       backoffStep = 0;
       log("start", q.total, mode);
       chrome.alarms.clear(ALARM_WATCHDOG);
-      chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 30_000 });
+      chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 10_000 });
       scheduleNext(0);
       sendResponse({ ok: true });
     });
@@ -631,7 +657,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     resetQueue();
     sendResponse({ ok: true });
   } else if (msg.type === "CFG_UPDATED") {
-    cachedCfg = { ...cachedCfg, ...(msg.cfg || {}) };
+    cachedCfg = sanitizeConfig({ ...cachedCfg, ...(msg.cfg || {}) });
     sendResponse({ ok: true });
   }
 });
