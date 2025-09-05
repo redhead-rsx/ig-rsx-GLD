@@ -330,8 +330,10 @@ function renderStatus(f) {
   if (st.error) return `<span class="badge error">${st.error}</span>`;
   if (st.likesTotal)
     return `<span class="badge wait">Likes: ${st.likesDone || 0}/${st.likesTotal}</span>`;
-  if (st.followed || st.unfollowed)
+  if (st.followed)
     return '<span class="badge success">Seguido</span>';
+  if (st.unfollowed)
+    return '<span class="badge neutral">done</span>';
   return "";
 }
 
