@@ -114,6 +114,10 @@ button:disabled {
   background: #95a5a6;
   color: #fff;
 }
+.badge.neutral {
+  background: #3498db;
+  color: #fff;
+}
 #collectProgress {
   margin-left: 8px;
 }
