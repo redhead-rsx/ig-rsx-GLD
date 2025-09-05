@@ -619,7 +619,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   } else if (msg.type === "START_QUEUE") {
     if (q.isRunning)
       return sendResponse({ ok: false, error: "already_running" });
-    const { mode, likeCount, targets, cfg } = msg;
+    const { mode, likeCount, targets, cfg, listType } = msg;
     if (!["follow", "follow_like", "unfollow"].includes(mode))
       return sendResponse({ ok: false, error: "invalid_mode" });
     if (!Array.isArray(targets) || !targets.length)
@@ -628,7 +628,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       q.tabId = tabs[0]?.id || null;
       if (!q.tabId) return sendResponse({ ok: false, error: "no_tab" });
       let items = targets.slice();
-      if (!cfg?.includeAlreadyFollowing) {
+      if (!cfg?.includeAlreadyFollowing && listType !== "following") {
         const pre = await precheckWindow(q.tabId, items);
         items = pre.items;
       }
@@ -643,7 +643,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       q.likeCount = likeCount || 0;
       q.cfg = sanitizeConfig({ ...DEFAULT_CFG, ...(cfg || {}) });
       backoffStep = 0;
-      log("start", q.total, mode);
+      log("start", q.total, mode, listType);
       chrome.alarms.clear(ALARM_WATCHDOG);
       chrome.alarms.create(ALARM_WATCHDOG, { when: Date.now() + 10_000 });
       scheduleNext(0);
