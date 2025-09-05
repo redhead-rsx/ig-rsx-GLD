@@ -149,14 +149,20 @@ function execTask(action, payload = {}) {
 
 let currentBatchId = 0;
 
-async function processBatchStrict(rawBatch) {
+async function processBatchStrict(rawBatch, listType = "followers") {
   const norm = rawBatch.map(normUser).filter((u) => u && u.id);
   const uniq = dedupById(norm);
+
+  // When collecting from the list of accounts the user is following, we don't
+  // filter out already-following profiles here. Dedup + append only.
+  if (listType === "following") {
+    return { kept: uniq, removed: 0, unknown: 0 };
+  }
 
   let removedIdx = 0;
   let phase1 = uniq;
   if (uniq.length) {
-    const chk = await execTask('FOLLOW_INDEX_CHECK', {
+    const chk = await execTask("FOLLOW_INDEX_CHECK", {
       ids: uniq.map((u) => u.id),
     }).catch(() => ({ data: { ids: [] } }));
     const idxSet = new Set(chk.data?.ids || []);
@@ -172,7 +178,7 @@ async function processBatchStrict(rawBatch) {
 
   if (!phase1.length) return { kept: [], removed: removedIdx, unknown: 0 };
 
-  const relResp = await execTask('FRIENDSHIP_STATUS_BULK', {
+  const relResp = await execTask("FRIENDSHIP_STATUS_BULK", {
     users: phase1,
   }).catch(() => ({ data: {} }));
   const rel = relResp.data || {};
@@ -199,7 +205,7 @@ async function processBatchStrict(rawBatch) {
       return !r || r.resolved !== true;
     });
     const unkSet = new Set(usersUnknown.map((u) => u.id));
-    const rel2Resp = await execTask('FRIENDSHIP_STATUS_BULK', {
+    const rel2Resp = await execTask("FRIENDSHIP_STATUS_BULK", {
       users: usersUnknown,
       forceFresh: true,
     }).catch(() => ({ data: {} }));
@@ -221,12 +227,12 @@ async function processBatchStrict(rawBatch) {
   return { kept, removed, unknown };
 }
 
-async function loadUsers(limit, mode) {
+async function loadUsers(limit, listType) {
   const myId = ++currentBatchId;
   const username = location.pathname.split("/").filter(Boolean)[0];
   if (!username || limit <= 0)
     return { items: [], total: 0, error: "invalid_username_or_limit" };
-  log(`[collect] start ${mode} target ${limit}`);
+  log(`[collect] start ${listType} target ${limit}`);
   await execTask('FOLLOW_INDEX_INIT', {}).catch(() => {});
   const lookup = await execTask("LOOKUP", { username }).catch((e) => {
     console.error('[cs]', '[collect] lookup failed', e);
@@ -241,7 +247,7 @@ async function loadUsers(limit, mode) {
   let unknownTotal = 0;
   while (items.length < limit) {
     const res = await execTask(
-      mode === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
+      listType === "following" ? "LIST_FOLLOWING" : "LIST_FOLLOWERS",
       { userId, limit: 24, cursor }
     ).catch((e) => {
       console.error('[cs]', '[collect] page failed', e);
@@ -253,7 +259,7 @@ async function loadUsers(limit, mode) {
       if (!cursor) break;
       continue;
     }
-    const { kept, removed, unknown } = await processBatchStrict(raw);
+    const { kept, removed, unknown } = await processBatchStrict(raw, listType);
     if (myId !== currentBatchId) {
       return { items, total: items.length, removedAlreadyFollowing: removedTotal, unknownTotal };
     }
@@ -265,6 +271,12 @@ async function loadUsers(limit, mode) {
     }
     removedTotal += removed;
     unknownTotal += unknown;
+    console.debug(
+      `[collect] listType=%s filteredAlreadyFollowing=batch=%d total=%d`,
+      listType,
+      removed,
+      removedTotal,
+    );
     console.debug(
       `[batch] raw=%d kept=%d removed=%d unknown=%d total=%d/%d`,
       raw.length,
@@ -300,8 +312,8 @@ window.addEventListener("message", async (ev) => {
   if (!msg || msg.from !== "ig-panel") return;
   if (msg.type === "LOAD_FOLLOWERS" || msg.type === "LOAD_FOLLOWING") {
     const limit = Math.max(0, Math.min(200, parseInt(msg.limit, 10) || 0));
-    const mode = msg.type === "LOAD_FOLLOWING" ? "following" : "followers";
-    const res = await loadUsers(limit, mode);
+    const listType = msg.type === "LOAD_FOLLOWING" ? "following" : "followers";
+    const res = await loadUsers(limit, listType);
     window.postMessage(
       {
         type: "FOLLOWERS_LOADED",
@@ -310,6 +322,7 @@ window.addEventListener("message", async (ev) => {
         error: res.error,
         removedAlreadyFollowing: res.removedAlreadyFollowing,
         unknownTotal: res.unknownTotal,
+        listType,
       },
       "*",
     );
@@ -321,6 +334,7 @@ window.addEventListener("message", async (ev) => {
         likeCount: msg.likeCount,
         targets: msg.targets,
         cfg: msg.cfg,
+        listType: msg.listType,
       },
       (resp) => {
         window.postMessage({ type: "QUEUE_STARTED", ok: resp?.ok }, "*");

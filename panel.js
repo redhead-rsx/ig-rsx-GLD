@@ -8,6 +8,7 @@ const DEFAULT_CFG = {
 };
 let cfg = { ...DEFAULT_CFG };
 let followers = [];
+let listType = "followers";
 let page = 1;
 let pageSize = DEFAULT_CFG.pageSize;
 let running = false;
@@ -45,12 +46,16 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
       return;
     }
     followers = msg.items || [];
+    listType = msg.listType || "followers";
     page = 1;
     totalRemovedAlreadyFollowing = msg.removedAlreadyFollowing || 0;
     totalUnknown = msg.unknownTotal || 0;
     renderTable();
     updatePager();
     updateCollectProgress();
+    const originLabel =
+      listType === "following" ? "Seguindo" : "Seguidores";
+    qs("#listOrigin").textContent = `Origem: ${originLabel}`;
   } else if (msg.type === "ROW_UPDATE") {
     const row = followers.find((f) => f.id === msg.id);
     if (row) {
@@ -107,6 +112,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     running = false;
     followers = [];
     page = 1;
+    listType = "followers";
     totalRemovedAlreadyFollowing = 0;
     totalUnknown = 0;
     ov = {
@@ -123,6 +129,7 @@ window.__IG_PANEL_MSG_HANDLER = (ev) => {
     renderTable();
     updatePager();
     updateCollectProgress();
+    qs("#listOrigin").textContent = "";
     updateRunButtons();
   }
 };
@@ -252,7 +259,14 @@ function startProcessing() {
   const mode = document.querySelector('input[name="actionMode"]:checked').value;
   const likeCount = parseInt(qs("#likeCount").value, 10) || 0;
   const cfgSnapshot = getCurrentCfg();
-  send({ type: "START_QUEUE", mode, likeCount, targets, cfg: cfgSnapshot });
+  send({
+    type: "START_QUEUE",
+    mode,
+    likeCount,
+    targets,
+    cfg: cfgSnapshot,
+    listType,
+  });
   running = true;
   updateRunButtons();
 }
